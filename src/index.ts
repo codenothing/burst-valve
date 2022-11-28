@@ -9,6 +9,7 @@ interface PromiseStore<Result> {
 /**
  * Method for running a single process
  * @type FetchResult Result type for the valve
+ * @type SubqueueKeyType Subqueue unique identifier type
  * @param subqueue Unique key of the subqueue being run
  */
 export type FetcherProcess<
@@ -17,7 +18,29 @@ export type FetcherProcess<
 > = (subqueue?: SubqueueKeyType) => Promise<FetchResult>;
 
 /**
- * Concurrent queue for a single asynchronous action
+ * Method for running a batch fetch process
+ * @type FetchResult Result type for the valve
+ * @type SubqueueKeyType Subqueue unique identifier type
+ * @param subqueues Unique keys of the subqueues being run
+ */
+export type BatchFetcherProcess<
+  FetchResult,
+  SubqueueKeyType = string | number | symbol
+> = (
+  subqueues: SubqueueKeyType[],
+  earlyWrite: (subqueue: SubqueueKeyType, result: FetchResult | Error) => void
+) => Promise<
+  Array<FetchResult | Error> | Map<SubqueueKeyType, FetchResult | Error> | void
+>;
+
+export interface BurstValveParams<DrainResult, SubqueueKeyType> {
+  displayName?: string;
+  fetcher?: FetcherProcess<DrainResult, SubqueueKeyType>;
+  batch?: BatchFetcherProcess<DrainResult, SubqueueKeyType>;
+}
+
+/**
+ * Concurrent queue for a single (or batch) asynchronous action
  * @type DrainResult Result type when queue is drained
  * @type SubqueueKeyType Error type when queue is drained with an error
  */
@@ -26,14 +49,22 @@ export class BurstValve<
   SubqueueKeyType = string | number | symbol
 > {
   /**
-   * Display name for the queue
+   * Display name for the valve
    */
   public readonly displayName: string;
 
   /**
    * Fetcher for single concurrent running of a function
    */
-  private readonly fetcher: FetcherProcess<DrainResult, SubqueueKeyType>;
+  private readonly fetcher?: FetcherProcess<DrainResult, SubqueueKeyType>;
+
+  /**
+   * Fetcher for batch of unique identifiers to run once
+   */
+  private readonly batchFetcher?: BatchFetcherProcess<
+    DrainResult,
+    SubqueueKeyType
+  >;
 
   /**
    * Queue of promise callbacks
@@ -43,10 +74,8 @@ export class BurstValve<
   /**
    * Keyed subqueues of promise callbacks
    */
-  private subqueues: Record<
-    string | number | symbol,
-    PromiseStore<DrainResult>[] | undefined
-  > = {};
+  private subqueues: Map<SubqueueKeyType, PromiseStore<DrainResult>[]> =
+    new Map();
 
   /**
    * Creates an instance of BurstValve with a custom fetcher
@@ -65,24 +94,49 @@ export class BurstValve<
   );
 
   /**
+   * Creates an instance of BurstValve with configurable parameters
+   * @param config Burst value configuration
+   */
+  constructor(config: BurstValveParams<DrainResult, SubqueueKeyType>);
+
+  /**
    * Creates an instance of BurstValve with a custom display name and fetcher
-   * @param displayName Name for the valve
+   * @param displayName Name for the valve, fetcher process, or burst configuration
    * @param fetcher Fetcher process for single concurrency process running
    */
   constructor(
-    displayName: string | FetcherProcess<DrainResult, SubqueueKeyType>,
+    displayName:
+      | string
+      | FetcherProcess<DrainResult, SubqueueKeyType>
+      | BurstValveParams<DrainResult, SubqueueKeyType>,
     fetcher?: FetcherProcess<DrainResult, SubqueueKeyType>
   ) {
-    if (typeof displayName === "function") {
-      fetcher = displayName;
-      displayName = "Burst Valve";
+    // (displayName, fetcher)
+    if (typeof displayName === "string") {
+      this.displayName = displayName;
+      this.fetcher = fetcher;
+    }
+    // (fetcher)
+    else if (typeof displayName === "function") {
+      this.displayName = "Burst Valve";
+      this.fetcher = displayName;
+    }
+    // (params)
+    else {
+      this.displayName = displayName.displayName || "Burst Valve";
+      this.fetcher = displayName.fetcher;
+      this.batchFetcher = displayName.batch;
     }
 
-    this.displayName = displayName;
-    if (typeof fetcher === "function") {
-      this.fetcher = fetcher;
-    } else {
-      throw new Error(`Fetcher process not found`);
+    // Ensure some fetching process is defined
+    if (!this.fetcher && !this.batchFetcher) {
+      throw new Error(`No fetcher process defined on ${this.displayName}`);
+    }
+    // Ensure there is only one fetcher process
+    else if (this.fetcher && this.batchFetcher) {
+      throw new Error(
+        `Cannot define both a batch fetcher and a single fetcher at the same time for ${this.displayName}`
+      );
     }
   }
 
@@ -91,8 +145,8 @@ export class BurstValve<
    * @param subqueue Name of queue to check activity. For non-global queues
    */
   public isActive(subqueue?: SubqueueKeyType): boolean {
-    if (subqueue) {
-      return this.subqueues[subqueue as string] ? true : false;
+    if (subqueue !== undefined) {
+      return this.subqueues.has(subqueue);
     } else {
       return this.queue ? true : false;
     }
@@ -104,14 +158,51 @@ export class BurstValve<
    */
   public async fetch(subqueue?: SubqueueKeyType): Promise<DrainResult> {
     return new Promise<DrainResult>((resolve, reject) => {
-      if (subqueue) {
-        const list = this.subqueues[subqueue as string];
+      // Default to batch fetcher when defined
+      if (this.batchFetcher) {
+        if (subqueue === undefined) {
+          return reject(
+            new Error(
+              `Cannot make un-identified fetch requests when batching is enabled for ${this.displayName}`
+            )
+          );
+        }
+
+        return this.batch([subqueue])
+          .catch(reject)
+          .then((result) => {
+            if (result) {
+              if (result[0] instanceof Error) {
+                reject(result[0]);
+              } else {
+                resolve(result[0] as DrainResult);
+              }
+            } else {
+              reject(
+                new Error(
+                  `Batch fetcher process result not found for ${this.displayName}`
+                )
+              );
+            }
+          });
+      }
+      // Safety net
+      else if (!this.fetcher) {
+        return reject(
+          new Error(`Fetch process not defined for ${this.displayName}`)
+        );
+      }
+      // Subqueue defined
+      else if (subqueue) {
+        const list = this.subqueues.get(subqueue);
         if (list) {
           return list.push({ resolve, reject });
         } else {
-          this.subqueues[subqueue as string] = [{ resolve, reject }];
+          this.subqueues.set(subqueue, [{ resolve, reject }]);
         }
-      } else {
+      }
+      // Global queue
+      else {
         if (this.queue) {
           return this.queue.push({ resolve, reject });
         } else {
@@ -121,39 +212,205 @@ export class BurstValve<
 
       this.fetcher(subqueue)
         .then((value) => {
-          this.getQueue(subqueue).forEach(({ resolve }) => resolve(value));
+          this.flushResult(subqueue, value);
         })
         .catch((e) => {
           const error =
             e instanceof Error
               ? e
-              : typeof e === "string"
-              ? new Error(e)
-              : new Error(`Unknown Fetcher Error: ${e}`);
+              : new Error(`${this.displayName} Fetcher Error: ${e}`);
 
-          this.getQueue(subqueue).forEach(({ reject }) => reject(error));
+          this.flushResult(subqueue, error);
         });
     });
   }
 
   /**
-   * Returns the active queue (or subqueue) after clearing it
-   * @param subqueue Subqueue identifier
+   * Batches fetching of unique identifiers into a single process, waiting
+   * for existing queues if they already exist
+   *
+   * @param subqueues List of unique identifiers to fetch at once
    */
-  private getQueue(subqueue?: SubqueueKeyType): PromiseStore<DrainResult>[] {
+  public async batch(
+    subqueues: SubqueueKeyType[]
+  ): Promise<Array<DrainResult | Error>> {
+    return new Promise<Array<DrainResult | Error>>((resolve, reject) => {
+      if (!this.batchFetcher) {
+        return reject(
+          new Error(`Batch Fetcher Process not defined for ${this.displayName}`)
+        );
+      }
+
+      const results: Map<SubqueueKeyType, DrainResult | Error> = new Map();
+      const fetchBatchKeys: SubqueueKeyType[] = [];
+      const fetchPromises: Promise<void>[] = [];
+
+      for (const id of subqueues) {
+        const list = this.subqueues.get(id);
+
+        // Dedupe fetch keys
+        if (fetchBatchKeys.includes(id)) {
+          continue;
+        }
+        // Wait for existing queue if it exists
+        else if (list) {
+          fetchPromises.push(
+            new Promise((queuedResolve) => {
+              list.push({
+                resolve: (value) => {
+                  if (!results.has(id)) {
+                    results.set(id, value);
+                  }
+                  queuedResolve();
+                },
+                reject: (error) => {
+                  if (!results.has(id)) {
+                    results.set(id, error);
+                  }
+                  queuedResolve();
+                },
+              });
+            })
+          );
+        }
+        // Mark subqueue as active before adding fetch key
+        else {
+          this.subqueues.set(id, []);
+          fetchBatchKeys.push(id);
+        }
+      }
+
+      // Only trigger batch fetcher if there are inactive keys to fetch
+      let batchPromise = Promise.resolve();
+      if (fetchBatchKeys.length > 0) {
+        batchPromise = new Promise((batchResolve, batchReject) => {
+          let finished = false;
+
+          // Callback safety net
+          if (!this.batchFetcher) {
+            return batchReject(
+              new Error(
+                `Batch fetcher process not defined for ${this.displayName}`
+              )
+            );
+          }
+
+          // Trigger the batch fetching process
+          this.batchFetcher(fetchBatchKeys, (key, value) => {
+            // Ignore any writes once the actual fetch process has completed
+            if (finished) {
+              throw new Error(
+                `Batch fetch process has already completed for ${this.displayName}`
+              );
+            }
+            // [key, value] arg pair result
+            else if (!results.has(key)) {
+              results.set(key, value);
+              this.flushResult(key, value);
+            }
+          })
+            .then((batchResult) => {
+              finished = true;
+
+              // Batch process returns array of results matching the index list it was sent
+              if (Array.isArray(batchResult)) {
+                // Enforce array results length must match number of keys passed
+                if (batchResult.length !== fetchBatchKeys.length) {
+                  return batchReject(
+                    new Error(
+                      `Batch fetch result array length does not match key length for ${this.displayName}`
+                    )
+                  );
+                }
+
+                // Assign results
+                fetchBatchKeys.forEach((id, index) => {
+                  if (!results.has(id)) {
+                    const value = batchResult[index];
+
+                    results.set(id, value);
+                    this.flushResult(id, value);
+                  }
+                });
+              }
+              // Batch process returns map of results
+              else if (batchResult instanceof Map) {
+                batchResult.forEach((value, id) => {
+                  if (!results.has(id)) {
+                    results.set(id, value);
+                    this.flushResult(id, value);
+                  }
+                });
+              }
+
+              batchResolve();
+            })
+            .catch((e) => {
+              if (finished) {
+                return;
+              }
+
+              const error =
+                e instanceof Error
+                  ? e
+                  : new Error(`${this.displayName} batch fetcher error: ${e}`);
+
+              fetchBatchKeys.forEach((id) => {
+                if (!results.has(id)) {
+                  results.set(id, error);
+                  this.flushResult(id, error);
+                }
+              });
+
+              finished = true;
+              batchResolve();
+            });
+        });
+      }
+
+      // Wait for all queues to resolve
+      Promise.all([batchPromise, ...fetchPromises])
+        .then(() => {
+          resolve(
+            subqueues.map((id) => {
+              return results.has(id)
+                ? (results.get(id) as DrainResult | Error)
+                : new Error(
+                    `Batch fetch result not found for '${id}' subqueue in ${this.displayName}`
+                  );
+            })
+          );
+        })
+        .catch(reject);
+    });
+  }
+
+  /**
+   * Flushes the queue specified with the result passed
+   * @param result Successful/Failed result of the fetch process
+   * @param subqueue Unique identifier tied to the fetch process
+   */
+  private flushResult(
+    subqueue: SubqueueKeyType | undefined,
+    result: DrainResult | Error
+  ) {
     let list: PromiseStore<DrainResult>[] = [];
 
-    if (subqueue) {
-      list = this.subqueues[subqueue as string] || [];
-
-      if (list) {
-        delete this.subqueues[subqueue as string];
+    if (subqueue !== undefined) {
+      const sublist = this.subqueues.get(subqueue);
+      if (sublist) {
+        list = sublist;
+        this.subqueues.delete(subqueue);
       }
     } else if (this.queue) {
       list = this.queue;
       this.queue = undefined;
     }
 
-    return list;
+    if (result instanceof Error) {
+      list.forEach(({ reject }) => reject(result));
+    } else {
+      list.forEach(({ resolve }) => resolve(result));
+    }
   }
 }

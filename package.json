@@ -1,7 +1,7 @@
 {
   "name": "burst-valve",
   "version": "1.0.0",
-  "description": "An in memory queue for async processes in high concurrency code paths.",
+  "description": "An in memory queue for async processes in high concurrency code paths",
   "author": "Corey Hart <corey@codenothing.com>",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
