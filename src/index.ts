@@ -22,6 +22,7 @@ export type FetcherProcess<
  * @type FetchResult Result type for the valve
  * @type SubqueueKeyType Subqueue unique identifier type
  * @param subqueues Unique keys of the subqueues being run
+ * @param earlyWrite Mechanism for unblocking subqueues as the data is availiable
  */
 export type BatchFetcherProcess<
   FetchResult,
@@ -33,9 +34,24 @@ export type BatchFetcherProcess<
   Array<FetchResult | Error> | Map<SubqueueKeyType, FetchResult | Error> | void
 >;
 
+/**
+ * Configurable parameters when creating a new instance of BurstValve
+ */
 export interface BurstValveParams<DrainResult, SubqueueKeyType> {
+  /**
+   * Display name for the valve (useful for debugging exceptions)
+   */
   displayName?: string;
+
+  /**
+   * Fetcher process for single concurrency process running
+   */
   fetcher?: FetcherProcess<DrainResult, SubqueueKeyType>;
+
+  /**
+   * Fetcher process for single concurrency on a list
+   * of unique identifiers
+   */
   batch?: BatchFetcherProcess<DrainResult, SubqueueKeyType>;
 }
 
@@ -74,8 +90,7 @@ export class BurstValve<
   /**
    * Keyed subqueues of promise callbacks
    */
-  private subqueues: Map<SubqueueKeyType, PromiseStore<DrainResult>[]> =
-    new Map();
+  private subqueues = new Map<SubqueueKeyType, PromiseStore<DrainResult>[]>();
 
   /**
    * Creates an instance of BurstValve with a custom fetcher
@@ -142,7 +157,7 @@ export class BurstValve<
 
   /**
    * Determines if queue (or subqueue) has an active action being taken
-   * @param subqueue Name of queue to check activity. For non-global queues
+   * @param subqueue Unique identifier of the subqueue to check activity.
    */
   public isActive(subqueue?: SubqueueKeyType): boolean {
     if (subqueue !== undefined) {
@@ -154,7 +169,7 @@ export class BurstValve<
 
   /**
    * Leverages the current valve to only have a single running process of a function
-   * @param subqueue Name of the subqueue
+   * @param subqueue Unique identifier of the subqueue to fetch data for
    */
   public async fetch(subqueue?: SubqueueKeyType): Promise<DrainResult> {
     return new Promise<DrainResult>((resolve, reject) => {
@@ -210,18 +225,15 @@ export class BurstValve<
         }
       }
 
+      // Run the fetcher process and flusth the results
       this.fetcher(subqueue)
-        .then((value) => {
-          this.flushResult(subqueue, value);
-        })
-        .catch((e) => {
-          const error =
-            e instanceof Error
-              ? e
-              : new Error(`${this.displayName} Fetcher Error: ${e}`);
-
-          this.flushResult(subqueue, error);
-        });
+        .then((value) => this.flushResult(subqueue, value))
+        .catch((e) =>
+          this.flushResult(
+            subqueue,
+            new Error(`Fetcher error for ${this.displayName}`, { cause: e })
+          )
+        );
     });
   }
 
@@ -241,10 +253,11 @@ export class BurstValve<
         );
       }
 
-      const results: Map<SubqueueKeyType, DrainResult | Error> = new Map();
+      const results = new Map<SubqueueKeyType, DrainResult | Error>();
       const fetchBatchKeys: SubqueueKeyType[] = [];
       const fetchPromises: Promise<void>[] = [];
 
+      // Look for active subqueue for each identifier before creating one
       for (const id of subqueues) {
         const list = this.subqueues.get(id);
 
@@ -300,7 +313,7 @@ export class BurstValve<
             // Ignore any writes once the actual fetch process has completed
             if (finished) {
               throw new Error(
-                `Batch fetch process has already completed for ${this.displayName}`
+                `Batch fetcher process has already completed for ${this.displayName}`
               );
             }
             // [key, value] arg pair result
@@ -318,7 +331,7 @@ export class BurstValve<
                 if (batchResult.length !== fetchBatchKeys.length) {
                   return batchReject(
                     new Error(
-                      `Batch fetch result array length does not match key length for ${this.displayName}`
+                      `Batch fetcher result array length does not match key length for ${this.displayName}`
                     )
                   );
                 }
@@ -346,14 +359,12 @@ export class BurstValve<
               batchResolve();
             })
             .catch((e) => {
-              if (finished) {
-                return;
-              }
+              finished = true;
 
-              const error =
-                e instanceof Error
-                  ? e
-                  : new Error(`${this.displayName} batch fetcher error: ${e}`);
+              const error = new Error(
+                `Batch fetcher error for ${this.displayName}`,
+                { cause: e }
+              );
 
               fetchBatchKeys.forEach((id) => {
                 if (!results.has(id)) {
@@ -362,7 +373,6 @@ export class BurstValve<
                 }
               });
 
-              finished = true;
               batchResolve();
             });
         });
@@ -376,7 +386,7 @@ export class BurstValve<
               return results.has(id)
                 ? (results.get(id) as DrainResult | Error)
                 : new Error(
-                    `Batch fetch result not found for '${id}' subqueue in ${this.displayName}`
+                    `Batch fetcher result not found for '${id}' subqueue in ${this.displayName}`
                   );
             })
           );
@@ -387,15 +397,15 @@ export class BurstValve<
 
   /**
    * Flushes the queue specified with the result passed
-   * @param result Successful/Failed result of the fetch process
    * @param subqueue Unique identifier tied to the fetch process
+   * @param result Successful/Failed result of the fetch process
    */
   private flushResult(
     subqueue: SubqueueKeyType | undefined,
     result: DrainResult | Error
   ) {
+    // Find the relevant queue
     let list: PromiseStore<DrainResult>[] = [];
-
     if (subqueue !== undefined) {
       const sublist = this.subqueues.get(subqueue);
       if (sublist) {
@@ -407,6 +417,7 @@ export class BurstValve<
       this.queue = undefined;
     }
 
+    // Send result/error
     if (result instanceof Error) {
       list.forEach(({ reject }) => reject(result));
     } else {
