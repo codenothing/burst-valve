@@ -27,7 +27,7 @@ describe("BurstValve", () => {
     test("should use the display name passed in the config object", () => {
       const valve = new BurstValve<FetchResult>({
         displayName: `Custom Display Name`,
-        fetcher: defaultFetcher,
+        fetch: defaultFetcher,
       });
       expect(valve.displayName).toEqual(`Custom Display Name`);
     });
@@ -42,7 +42,7 @@ describe("BurstValve", () => {
       expect(
         () =>
           new BurstValve<number, number>({
-            fetcher: async () => 5,
+            fetch: async () => 5,
             batch: async () => undefined,
           })
       ).toThrow(
@@ -474,7 +474,7 @@ describe("BurstValve", () => {
     test("should throw error for batch when only fetcher is defined", async () => {
       let runs = 0;
       const valve = new BurstValve<number, number>({
-        fetcher: async () => {
+        fetch: async () => {
           runs++;
           await wait();
           return 25;

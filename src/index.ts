@@ -46,7 +46,7 @@ export interface BurstValveParams<DrainResult, SubqueueKeyType> {
   /**
    * Fetcher process for single concurrency process running
    */
-  fetcher?: FetcherProcess<DrainResult, SubqueueKeyType>;
+  fetch?: FetcherProcess<DrainResult, SubqueueKeyType>;
 
   /**
    * Fetcher process for single concurrency on a list
@@ -139,7 +139,7 @@ export class BurstValve<
     // (params)
     else {
       this.displayName = displayName.displayName || "Burst Valve";
-      this.fetcher = displayName.fetcher;
+      this.fetcher = displayName.fetch;
       this.batchFetcher = displayName.batch;
     }
 
@@ -325,35 +325,37 @@ export class BurstValve<
             .then((batchResult) => {
               finished = true;
 
-              // Batch process returns array of results matching the index list it was sent
-              if (Array.isArray(batchResult)) {
-                // Enforce array results length must match number of keys passed
-                if (batchResult.length !== fetchBatchKeys.length) {
-                  return batchReject(
-                    new Error(
-                      `Batch fetcher result array length does not match key length for ${this.displayName}`
-                    )
-                  );
+              if (batchResult) {
+                // Batch process returns array of results matching the index list it was sent
+                if (Array.isArray(batchResult)) {
+                  // Enforce array results length must match number of keys passed
+                  if (batchResult.length !== fetchBatchKeys.length) {
+                    return batchReject(
+                      new Error(
+                        `Batch fetcher result array length does not match key length for ${this.displayName}`
+                      )
+                    );
+                  }
+
+                  // Assign results
+                  fetchBatchKeys.forEach((id, index) => {
+                    if (!results.has(id)) {
+                      const value = batchResult[index];
+
+                      results.set(id, value);
+                      this.flushResult(id, value);
+                    }
+                  });
                 }
-
-                // Assign results
-                fetchBatchKeys.forEach((id, index) => {
-                  if (!results.has(id)) {
-                    const value = batchResult[index];
-
-                    results.set(id, value);
-                    this.flushResult(id, value);
-                  }
-                });
-              }
-              // Batch process returns map of results
-              else if (batchResult instanceof Map) {
-                batchResult.forEach((value, id) => {
-                  if (!results.has(id)) {
-                    results.set(id, value);
-                    this.flushResult(id, value);
-                  }
-                });
+                // Batch process returns map of results
+                else if (batchResult instanceof Map) {
+                  batchResult.forEach((value, id) => {
+                    if (!results.has(id)) {
+                      results.set(id, value);
+                      this.flushResult(id, value);
+                    }
+                  });
+                }
               }
 
               batchResolve();
