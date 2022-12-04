@@ -490,7 +490,7 @@ describe("BurstValve", () => {
     test("should throw error when attempting to early write a fetch process that has already completed", async () => {
       return new Promise<void>((resolve, reject) => {
         const valve = new BurstValve<number, number>({
-          batch: async (ids, earlyWrite) => {
+          batch: async (_ids, earlyWrite) => {
             return new Promise<void>((fetchResolve) => {
               earlyWrite(1, 2);
               fetchResolve();

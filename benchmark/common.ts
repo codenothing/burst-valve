@@ -1,10 +1,12 @@
 import { createPool } from "mysql";
-import { BurstValve } from "../src";
+import Memcached from "memcached";
 
 export interface Customer {
   id: string;
   name: string;
 }
+
+export const cache = new Memcached("127.0.0.1:11211");
 
 export const pool = createPool({
   connectionLimit: 10,
@@ -13,6 +15,22 @@ export const pool = createPool({
   password: process.env.MYSQL_BENCHMARK_PASSWORD,
   database: process.env.MYSQL_BENCHMARK_DATABASE,
 });
+
+export const getCustomer = async (id: string) => {
+  return new Promise<Customer>((resolve, reject) => {
+    pool.query(
+      `SELECT id, name FROM customers WHERE id = ?`,
+      [id],
+      (e, results?: Customer[]) => {
+        if (e || !results || !results[0]) {
+          reject(e || new Error(`Customer ${id} not found`));
+        } else {
+          resolve(results[0]);
+        }
+      }
+    );
+  });
+};
 
 export const getCustomers = async (ids: string[]) => {
   return new Promise<Customer[]>((resolve, reject) => {
@@ -29,24 +47,3 @@ export const getCustomers = async (ids: string[]) => {
     );
   });
 };
-
-export const fetchValve = new BurstValve<Customer, string>({
-  displayName: "Single Fetch",
-  fetch: async (id) => {
-    if (id) {
-      return await getCustomers([id])[0];
-    } else {
-      throw new Error(`No subqueue id found`);
-    }
-  },
-});
-
-export const batchValve = new BurstValve<Customer, string>({
-  displayName: "Batch Fetch",
-  batch: async (ids, earlyWrite) => {
-    const results = await getCustomers(ids);
-    results.forEach((row) => {
-      earlyWrite(row.id, row);
-    });
-  },
-});

@@ -247,7 +247,8 @@ export class BurstValve<
     subqueues: SubqueueKeyType[]
   ): Promise<Array<DrainResult | Error>> {
     return new Promise<Array<DrainResult | Error>>((resolve, reject) => {
-      if (!this.batchFetcher) {
+      const batchFetcher = this.batchFetcher;
+      if (!batchFetcher) {
         return reject(
           new Error(`Batch Fetcher Process not defined for ${this.displayName}`)
         );
@@ -299,17 +300,8 @@ export class BurstValve<
         batchPromise = new Promise((batchResolve, batchReject) => {
           let finished = false;
 
-          // Callback safety net
-          if (!this.batchFetcher) {
-            return batchReject(
-              new Error(
-                `Batch fetcher process not defined for ${this.displayName}`
-              )
-            );
-          }
-
           // Trigger the batch fetching process
-          this.batchFetcher(fetchBatchKeys, (key, value) => {
+          batchFetcher(fetchBatchKeys, (key, value) => {
             // Ignore any writes once the actual fetch process has completed
             if (finished) {
               throw new Error(

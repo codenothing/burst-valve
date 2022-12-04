@@ -39,7 +39,7 @@ const suite = new Benchmark.Suite();
 
 suite.add("Tick Baseline", {
   defer: true,
-  fn: async (deferred) => {
+  fn: async (deferred: Benchmark.Deferred) => {
     await tick();
     deferred.resolve();
   },
@@ -48,28 +48,28 @@ suite.add("Tick Baseline", {
 suite
   .add(`singleFetch single call`, {
     defer: true,
-    fn: async (deferred) => {
+    fn: async (deferred: Benchmark.Deferred) => {
       await singleFetch.fetch(1);
       deferred.resolve();
     },
   })
   .add(`arrayResult single call`, {
     defer: true,
-    fn: async (deferred) => {
+    fn: async (deferred: Benchmark.Deferred) => {
       await arrayResult.batch([1, 2, 3, 4, 5]);
       deferred.resolve();
     },
   })
   .add(`mapResult single call`, {
     defer: true,
-    fn: async (deferred) => {
+    fn: async (deferred: Benchmark.Deferred) => {
       await mapResult.batch([1, 2, 3, 4, 5]);
       deferred.resolve();
     },
   })
   .add(`earlyWriteValve single call`, {
     defer: true,
-    fn: async (deferred) => {
+    fn: async (deferred: Benchmark.Deferred) => {
       await earlyWriteValve.batch([1, 2, 3, 4, 5]);
       deferred.resolve();
     },
@@ -79,7 +79,7 @@ suite
   suite
     .add(`singleFetch / ${concurrent} concurrent`, {
       defer: true,
-      fn: async (deferred) => {
+      fn: async (deferred: Benchmark.Deferred) => {
         const stack: Promise<number>[] = [];
         for (let i = 0; i < concurrent; i++) {
           stack.push(singleFetch.fetch(1));
@@ -90,7 +90,7 @@ suite
     })
     .add(`arrayResult / ${concurrent} concurrent`, {
       defer: true,
-      fn: async (deferred) => {
+      fn: async (deferred: Benchmark.Deferred) => {
         const stack: Promise<(number | Error)[]>[] = [];
         for (let i = 0; i < concurrent; i++) {
           stack.push(arrayResult.batch([1, 2, 3, 4, 5]));
@@ -101,7 +101,7 @@ suite
     })
     .add(`mapResult / ${concurrent} concurrent`, {
       defer: true,
-      fn: async (deferred) => {
+      fn: async (deferred: Benchmark.Deferred) => {
         const stack: Promise<(number | Error)[]>[] = [];
         for (let i = 0; i < concurrent; i++) {
           stack.push(mapResult.batch([1, 2, 3, 4, 5]));
@@ -112,7 +112,7 @@ suite
     })
     .add(`earlyWriteValve / ${concurrent} concurrent`, {
       defer: true,
-      fn: async (deferred) => {
+      fn: async (deferred: Benchmark.Deferred) => {
         const stack: Promise<(number | Error)[]>[] = [];
         for (let i = 0; i < concurrent; i++) {
           stack.push(earlyWriteValve.batch([1, 2, 3, 4, 5]));
@@ -123,7 +123,7 @@ suite
     });
 });
 
-suite.on("cycle", (event) => {
+suite.on("cycle", (event: Benchmark.Event) => {
   if ((event.target.name as string).startsWith("singleFetch")) {
     console.log("----");
   }

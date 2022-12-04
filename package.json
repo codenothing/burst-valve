@@ -12,7 +12,7 @@
   },
   "scripts": {
     "clean": "rm -rf dist",
-    "build": "yarn clean && tsc -p tsconfig.json",
+    "build": "yarn clean && tsc -p tsconfig.dist.json",
     "lint": "eslint . --ext .ts",
     "pretest": "yarn build && yarn lint",
     "test": "jest --verbose --coverage",

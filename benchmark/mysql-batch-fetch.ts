@@ -1,12 +1,23 @@
 import Benchmark from "benchmark";
-import { batchValve, Customer, getCustomers } from "./common";
+import { BurstValve } from "../src";
+import { Customer, getCustomers } from "./common";
+
+const batchValve = new BurstValve<Customer, string>({
+  displayName: "Batch Fetch",
+  batch: async (ids, earlyWrite) => {
+    const results = await getCustomers(ids);
+    results.forEach((row) => {
+      earlyWrite(row.id, row);
+    });
+  },
+});
 
 const suite = new Benchmark.Suite();
 
 suite
   .add("MySQL Direct / 5 Concurrent", {
     defer: true,
-    fn: async (deferred) => {
+    fn: async (deferred: Benchmark.Deferred) => {
       await Promise.all([
         getCustomers([`1`, `2`, `3`]),
         getCustomers([`1`, `2`, `3`]),
@@ -19,7 +30,7 @@ suite
   })
   .add("MySQL Direct / 25 Concurrent", {
     defer: true,
-    fn: async (deferred) => {
+    fn: async (deferred: Benchmark.Deferred) => {
       const stack: Promise<Customer[]>[] = [];
       for (let i = 0; i < 25; i++) {
         stack.push(getCustomers([`1`, `2`, `3`]));
@@ -30,7 +41,7 @@ suite
   })
   .add("Burst Valve / 5 Concurrent", {
     defer: true,
-    fn: async (deferred) => {
+    fn: async (deferred: Benchmark.Deferred) => {
       await Promise.all([
         batchValve.batch([`1`, `2`, `3`]),
         batchValve.batch([`1`, `2`, `3`]),
@@ -43,7 +54,7 @@ suite
   })
   .add("Burst Valve / 25 Concurrent", {
     defer: true,
-    fn: async (deferred) => {
+    fn: async (deferred: Benchmark.Deferred) => {
       const stack: Promise<(Customer | Error)[]>[] = [];
       for (let i = 0; i < 25; i++) {
         stack.push(batchValve.batch([`1`, `2`, `3`]));
@@ -52,7 +63,7 @@ suite
       deferred.resolve();
     },
   })
-  .on("cycle", (event) => {
+  .on("cycle", (event: Benchmark.Event) => {
     console.log(String(event.target));
   })
   .on("complete", () => process.exit());
