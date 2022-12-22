@@ -123,7 +123,7 @@ run4; // [8] -> 16
 
 In the above example, the valve was able to detect that the identifiers `3` & `4` were already requested (active) by previous batch/fetch calls, which means they are not passed along to the batch fetcher for another query. Only inactive identifiers are requested, all active identifiers are queued to wait for a previous run to complete.
 
-## Early Writing
+### Early Writing
 
 To futher the concept of individual queues for batch runs, the batch fetcher process provides an early writing mechanism for broadcasting results as they come in. This gives the ability for queues to be drained as quickly as possible.
 
@@ -150,7 +150,7 @@ const [run1, run2, run3] = await Promise.all([
 
 **Note:** While early writing may be used in conjunction with overal batch process returned results, anything early written will take priority over returned results.
 
-## Benchmark
+### Benchmark
 
 Performance for batch fetching will vary depending on the number of overlapping identifiers being requested, but in an optimal scenario (high bursty traffic for specific data), the gains are significant.
 
