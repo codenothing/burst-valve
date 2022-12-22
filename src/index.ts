@@ -308,7 +308,7 @@ export class BurstValve<
                 `Batch fetcher process has already completed for ${this.displayName}`
               );
             }
-            // [key, value] arg pair result
+            // Do not override previous results as they have already been flushed
             else if (!results.has(key)) {
               results.set(key, value);
               this.flushResult(key, value);
