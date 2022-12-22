@@ -39,6 +39,17 @@ suite
       deferred.resolve();
     },
   })
+  .add("MySQL Direct / 50 Concurrent", {
+    defer: true,
+    fn: async (deferred: Benchmark.Deferred) => {
+      const stack: Promise<Customer[]>[] = [];
+      for (let i = 0; i < 50; i++) {
+        stack.push(getCustomers([`1`, `2`, `3`]));
+      }
+      await Promise.all(stack);
+      deferred.resolve();
+    },
+  })
   .add("Burst Valve / 5 Concurrent", {
     defer: true,
     fn: async (deferred: Benchmark.Deferred) => {
@@ -57,6 +68,17 @@ suite
     fn: async (deferred: Benchmark.Deferred) => {
       const stack: Promise<(Customer | Error)[]>[] = [];
       for (let i = 0; i < 25; i++) {
+        stack.push(batchValve.batch([`1`, `2`, `3`]));
+      }
+      await Promise.all(stack);
+      deferred.resolve();
+    },
+  })
+  .add("Burst Valve / 50 Concurrent", {
+    defer: true,
+    fn: async (deferred: Benchmark.Deferred) => {
+      const stack: Promise<(Customer | Error)[]>[] = [];
+      for (let i = 0; i < 50; i++) {
         stack.push(batchValve.batch([`1`, `2`, `3`]));
       }
       await Promise.all(stack);

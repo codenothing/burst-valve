@@ -56,10 +56,10 @@ export const getCustomer = async (id: string) => {
 
 To better visualize the performance gain, a simple benchmark run was setup to test various levels of concurrency (2022 MacBook Air M2).
 
-|             | 5 Concurrent          | 25 Concurrent         | 50 Concurrent         |
-| ----------- | --------------------- | --------------------- | --------------------- |
-| Direct Call | 5,490 ops/sec ±0.50%  | 1,150 ops/sec ±1.93%  | 523 ops/sec ±1.58%    |
-| BurstValve  | 11,571 ops/sec ±1.05% | 11,307 ops/sec ±1.03% | 11,408 ops/sec ±1.08% |
+| [Suite](benchmark/mysql-single-fetch.ts) | 5 Concurrent          | 25 Concurrent         | 50 Concurrent         |
+| ---------------------------------------- | --------------------- | --------------------- | --------------------- |
+| MySQL Direct                             | 5,490 ops/sec ±0.50%  | 1,150 ops/sec ±1.93%  | 523 ops/sec ±1.58%    |
+| BurstValve                               | 11,571 ops/sec ±1.05% | 11,307 ops/sec ±1.03% | 11,408 ops/sec ±1.08% |
 
 Again, this is a very crude example. Adding caching layer in front of the database call would improve the initial performance significantly. Even then, adding BurstValve would still add a layer of improvement as traffic rate increases.
 
@@ -91,10 +91,10 @@ const valve = new BurstValve<string>(async (id: string) => {
 });
 ```
 
-|             | 5 Concurrent          | 25 Concurrent         | 50 Concurrent         |
-| ----------- | --------------------- | --------------------- | --------------------- |
-| Direct Call | 23,220 ops/sec ±0.75% | 7,971 ops/sec ±0.14%  | 4,193 ops/sec ±1.76%  |
-| BurstValve  | 38,834 ops/sec ±0.72% | 34,557 ops/sec ±1.01% | 32,193 ops/sec ±1.03% |
+| [Suite](benchmark/memcached-single-fetch.ts) | 5 Concurrent          | 25 Concurrent         | 50 Concurrent         |
+| -------------------------------------------- | --------------------- | --------------------- | --------------------- |
+| Memcached Direct                             | 23,220 ops/sec ±0.75% | 7,971 ops/sec ±0.14%  | 4,193 ops/sec ±1.76%  |
+| BurstValve                                   | 38,834 ops/sec ±0.72% | 34,557 ops/sec ±1.01% | 32,193 ops/sec ±1.03% |
 
 # Batching
 
@@ -123,7 +123,7 @@ run4; // [8] -> 16
 
 In the above example, the valve was able to detect that the identifiers `3` & `4` were already requested (active) by previous batch/fetch calls, which means they are not passed along to the batch fetcher for another query. Only inactive identifiers are requested, all active identifiers are queued to wait for a previous run to complete.
 
-### Early Writing
+## Early Writing
 
 To futher the concept of individual queues for batch runs, the batch fetcher process provides an early writing mechanism for broadcasting results as they come in. This gives the ability for queues to be drained as quickly as possible.
 
@@ -149,3 +149,19 @@ const [run1, run2, run3] = await Promise.all([
 ```
 
 **Note:** While early writing may be used in conjunction with overal batch process returned results, anything early written will take priority over returned results.
+
+## Benchmark
+
+Performance for batch fetching will vary depending on the number of overlapping identifiers being requested, but in an optimal scenario (high bursty traffic for specific data), the gains are significant.
+
+| [MySQL Suite](benchmark/mysql-batch-fetch.ts) | 5 Concurrent          | 25 Concurrent        | 50 Concurrent        |
+| --------------------------------------------- | --------------------- | -------------------- | -------------------- |
+| Direct Call                                   | 5,101 ops/sec ±0.84%  | 1,127 ops/sec ±0.98% | 492 ops/sec ±1.88%   |
+| BurstValve                                    | 10,491 ops/sec ±0.75% | 9,499 ops/sec ±0.74% | 8,091 ops/sec ±0.83% |
+
+And similar to the fetch suite at the top, gains are amplified when putting a memcached layer in front
+
+| [Memcached Suite](benchmark/memcached-batch-fetch.ts) | 5 Concurrent          | 25 Concurrent         | 50 Concurrent         |
+| ----------------------------------------------------- | --------------------- | --------------------- | --------------------- |
+| Direct Call                                           | 16,735 ops/sec ±2.25% | 7,090 ops/sec ±1.84%  | 3,911 ops/sec ±0.76%  |
+| BurstValve                                            | 31,030 ops/sec ±1.24% | 23,106 ops/sec ±1.27% | 16,360 ops/sec ±1.02% |

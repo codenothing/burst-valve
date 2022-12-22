@@ -11,7 +11,7 @@ interface Customer {
 const cache = new Memcached("127.0.0.1:11211");
 
 const getCustomers = async (ids: string[]): Promise<Customer[]> => {
-  return new Promise<Customer[]>((resolve, reject) => {
+  return new Promise<Customer[]>((resolve) => {
     cache.getMulti(ids, (_e, data) => {
       const results: Record<string, Customer> = {};
       if (data) {
@@ -20,26 +20,15 @@ const getCustomers = async (ids: string[]): Promise<Customer[]> => {
         }
       }
 
-      const fetchIds = ids.filter((id) => !results[id]);
-
-      if (fetchIds.length) {
-        getCustomers(ids)
-          .then((values) => {
-            Object.assign(results, values);
-            resolve(ids.map((id) => results[id]));
-          })
-          .catch((e) => reject(e));
-      } else {
-        resolve(ids.map((id) => results[id]));
-      }
+      resolve(ids.map((id) => results[id]));
     });
   });
 };
 
 const batchValve = new BurstValve<Customer, string>({
-  displayName: "Batch Fetch",
+  displayName: "Memcached Batch Fetch",
   batch: async (ids, earlyWrite) => {
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<void>((resolve) => {
       cache.getMulti(ids, (_e, data) => {
         if (data) {
           for (const id in data) {
@@ -47,20 +36,7 @@ const batchValve = new BurstValve<Customer, string>({
           }
         }
 
-        const fetchIds = data ? ids.filter((id) => !data[id]) : ids;
-
-        if (fetchIds.length) {
-          getCustomers(ids)
-            .then((values) => {
-              values.forEach((value) => {
-                earlyWrite(value.id, value);
-              });
-              resolve();
-            })
-            .catch((e) => reject(e));
-        } else {
-          resolve();
-        }
+        resolve();
       });
     });
   },
