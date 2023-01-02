@@ -82,7 +82,7 @@ In the above example, the valve was able to detect that the identifiers `3` & `4
 
 ### Early Writing
 
-To futher the concept of individual queues for batch runs, the batch fetcher process provides an early writing mechanism for broadcasting results as they come in. This gives the ability for queues to be drained as quickly as possible.
+To further the concept of individual queues for batch runs, the batch fetcher process provides an early writing mechanism for broadcasting results as they come in. This gives the ability for queues to be drained as quickly as possible.
 
 ```ts
 const valve = new BurstValve<number, number>({
@@ -105,7 +105,7 @@ const [run1, run2, run3] = await Promise.all([
 // Resolution Order: run2, run3, run1
 ```
 
-**Note:** While early writing may be used in conjunction with overal batch process returned results, anything early written will take priority over returned results.
+**Note:** While early writing may be used in conjunction with overall batch process returned results, anything early written will take priority over returned results.
 
 ### Benchmark
 
@@ -125,7 +125,7 @@ And similar to the fetch suite at the top, gains are amplified when putting a me
 
 ## Streaming
 
-The stream method provides a callback style mechanism to obtain access to data as soon at it is availiable (anything that leverages early writing). Any identifiers requested through the stream interface will follow the batch paradigm, where overlapping ids will share responses to reduce active requests down to a single concurrency.
+The stream method provides a callback style mechanism to obtain access to data as soon at it is available (anything that leverages early writing). Any identifiers requested through the stream interface will follow the batch paradigm, where overlapping ids will share responses to reduce active requests down to a single concurrency.
 
 ```ts
 const valve = new BurstValve<number, number>({
