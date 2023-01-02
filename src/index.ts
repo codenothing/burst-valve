@@ -246,146 +246,217 @@ export class BurstValve<
   public async batch(
     subqueues: SubqueueKeyType[]
   ): Promise<Array<DrainResult | Error>> {
-    return new Promise<Array<DrainResult | Error>>((resolve, reject) => {
-      const batchFetcher = this.batchFetcher;
-      if (!batchFetcher) {
+    const results = new Map<SubqueueKeyType, DrainResult | Error>();
+    const fetchBatchKeys: SubqueueKeyType[] = [];
+    const fetchPromises: Promise<void>[] = [];
+
+    // Look for active subqueue for each identifier before creating one
+    for (const id of subqueues) {
+      const list = this.subqueues.get(id);
+
+      // Dedupe fetch keys
+      if (fetchBatchKeys.includes(id)) {
+        continue;
+      }
+      // Wait for existing queue if it exists
+      else if (list) {
+        fetchPromises.push(
+          new Promise<void>((queuedResolve) => {
+            list.push({
+              resolve: (value) => {
+                if (!results.has(id)) {
+                  results.set(id, value);
+                }
+                queuedResolve();
+              },
+              reject: (error) => {
+                if (!results.has(id)) {
+                  results.set(id, error);
+                }
+                queuedResolve();
+              },
+            });
+          })
+        );
+      }
+      // Mark subqueue as active before adding fetch key
+      else {
+        this.subqueues.set(id, []);
+        fetchBatchKeys.push(id);
+      }
+    }
+
+    // Only trigger batch fetcher if there are inactive keys to fetch
+    const batcherPromise =
+      fetchBatchKeys.length > 0
+        ? this.runBatchFetcher(fetchBatchKeys, results)
+        : Promise.resolve();
+
+    // Wait for all queues to resolve
+    await Promise.all([batcherPromise, ...fetchPromises]);
+
+    // Return the results
+    return subqueues.map((id) => results.get(id) as DrainResult | Error);
+  }
+
+  /**
+   * Batches fetching of unique identifiers into a single process, waiting
+   * for existing queues if they already exist
+   *
+   * @param subqueues List of unique identifiers to fetch at once
+   */
+  public async stream(
+    subqueues: SubqueueKeyType[],
+    streamResultCallback: (
+      subqueue: SubqueueKeyType,
+      result: DrainResult | Error
+    ) => Promise<void>
+  ): Promise<void> {
+    const uniqueKeys = new Set<SubqueueKeyType>(subqueues);
+    const fetchBatchKeys: SubqueueKeyType[] = [];
+    const streamResponses: Promise<void>[] = [];
+
+    // Look for active subqueue for each identifier before creating one
+    for (const id of uniqueKeys) {
+      let list = this.subqueues.get(id);
+
+      if (!list) {
+        this.subqueues.set(id, (list = []));
+        fetchBatchKeys.push(id);
+      }
+
+      streamResponses.push(
+        new Promise<void>((resolve, reject) => {
+          (list as PromiseStore<DrainResult>[]).push({
+            resolve: (value) => {
+              streamResultCallback(id, value).then(resolve).catch(reject);
+            },
+            reject: (error) => {
+              streamResultCallback(id, error).then(resolve).catch(reject);
+            },
+          });
+        })
+      );
+    }
+
+    // Only trigger batch fetcher if there are inactive keys to fetch
+    const batchPromise =
+      fetchBatchKeys.length > 0
+        ? this.runBatchFetcher(fetchBatchKeys)
+        : Promise.resolve();
+
+    // Wait for all queues to resolve
+    await Promise.all([batchPromise, ...streamResponses]);
+  }
+
+  /**
+   * Runs the user defined batch fetcher process
+   * @param subqueues List of unique identifiers to fetch at once
+   * @param results Optional list of shared results
+   */
+  private async runBatchFetcher(
+    subqueues: SubqueueKeyType[],
+    results?: Map<SubqueueKeyType, DrainResult | Error>
+  ): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      if (!this.batchFetcher) {
         return reject(
           new Error(`Batch Fetcher Process not defined for ${this.displayName}`)
         );
       }
 
-      const results = new Map<SubqueueKeyType, DrainResult | Error>();
-      const fetchBatchKeys: SubqueueKeyType[] = [];
-      const fetchPromises: Promise<void>[] = [];
+      // Keep reference to completed queues
+      const responses = new Set<SubqueueKeyType>();
 
-      // Look for active subqueue for each identifier before creating one
-      for (const id of subqueues) {
-        const list = this.subqueues.get(id);
-
-        // Dedupe fetch keys
-        if (fetchBatchKeys.includes(id)) {
-          continue;
-        }
-        // Wait for existing queue if it exists
-        else if (list) {
-          fetchPromises.push(
-            new Promise((queuedResolve) => {
-              list.push({
-                resolve: (value) => {
-                  if (!results.has(id)) {
-                    results.set(id, value);
-                  }
-                  queuedResolve();
-                },
-                reject: (error) => {
-                  if (!results.has(id)) {
-                    results.set(id, error);
-                  }
-                  queuedResolve();
-                },
-              });
-            })
+      // Trigger the batch fetching process
+      let finished = false;
+      this.batchFetcher(subqueues, (key, value) => {
+        // Ignore any writes once the actual fetch process has completed
+        if (finished) {
+          throw new Error(
+            `Batch fetcher process has already completed for ${this.displayName}`
           );
         }
-        // Mark subqueue as active before adding fetch key
-        else {
-          this.subqueues.set(id, []);
-          fetchBatchKeys.push(id);
+        // Do not override previous results as they have already been flushed
+        else if (!responses.has(key)) {
+          responses.add(key);
+          results?.set(key, value);
+          this.flushResult(key, value);
         }
-      }
+      })
+        .then((batchResult) => {
+          finished = true;
 
-      // Only trigger batch fetcher if there are inactive keys to fetch
-      let batchPromise = Promise.resolve();
-      if (fetchBatchKeys.length > 0) {
-        batchPromise = new Promise((batchResolve, batchReject) => {
-          let finished = false;
-
-          // Trigger the batch fetching process
-          batchFetcher(fetchBatchKeys, (key, value) => {
-            // Ignore any writes once the actual fetch process has completed
-            if (finished) {
-              throw new Error(
-                `Batch fetcher process has already completed for ${this.displayName}`
-              );
-            }
-            // Do not override previous results as they have already been flushed
-            else if (!results.has(key)) {
-              results.set(key, value);
-              this.flushResult(key, value);
-            }
-          })
-            .then((batchResult) => {
-              finished = true;
-
-              if (batchResult) {
-                // Batch process returns array of results matching the index list it was sent
-                if (Array.isArray(batchResult)) {
-                  // Enforce array results length must match number of keys passed
-                  if (batchResult.length !== fetchBatchKeys.length) {
-                    return batchReject(
-                      new Error(
-                        `Batch fetcher result array length does not match key length for ${this.displayName}`
-                      )
-                    );
-                  }
-
-                  // Assign results
-                  fetchBatchKeys.forEach((id, index) => {
-                    if (!results.has(id)) {
-                      const value = batchResult[index];
-
-                      results.set(id, value);
-                      this.flushResult(id, value);
-                    }
-                  });
-                }
-                // Batch process returns map of results
-                else if (batchResult instanceof Map) {
-                  batchResult.forEach((value, id) => {
-                    if (!results.has(id)) {
-                      results.set(id, value);
-                      this.flushResult(id, value);
-                    }
-                  });
-                }
+          if (batchResult) {
+            // Batch process returns array of results matching the index list it was sent
+            if (Array.isArray(batchResult)) {
+              // Enforce array results length must match number of keys passed
+              if (batchResult.length !== subqueues.length) {
+                return reject(
+                  new Error(
+                    `Batch fetcher result array length does not match key length for ${this.displayName}`
+                  )
+                );
               }
 
-              batchResolve();
-            })
-            .catch((e) => {
-              finished = true;
+              // Assign results
+              subqueues.forEach((id, index) => {
+                if (!responses.has(id)) {
+                  const value = batchResult[index];
 
-              const error = new Error(
-                `Batch fetcher error for ${this.displayName}`,
-                { cause: e }
-              );
-
-              fetchBatchKeys.forEach((id) => {
-                if (!results.has(id)) {
-                  results.set(id, error);
-                  this.flushResult(id, error);
+                  responses.add(id);
+                  results?.set(id, value);
+                  this.flushResult(id, value);
                 }
               });
 
-              batchResolve();
-            });
-        });
-      }
+              resolve();
+              return;
+            }
+            // Batch process returns map of results
+            else if (batchResult instanceof Map) {
+              batchResult.forEach((value, id) => {
+                if (!responses.has(id)) {
+                  responses.add(id);
+                  results?.set(id, value);
+                  this.flushResult(id, value);
+                }
+              });
+            }
+          }
 
-      // Wait for all queues to resolve
-      Promise.all([batchPromise, ...fetchPromises])
-        .then(() => {
-          resolve(
-            subqueues.map((id) => {
-              return results.has(id)
-                ? (results.get(id) as DrainResult | Error)
-                : new Error(
-                    `Batch fetcher result not found for '${id}' subqueue in ${this.displayName}`
-                  );
-            })
-          );
+          // Mark error for each unresolved subqueue key
+          subqueues.forEach((id) => {
+            if (!responses.has(id)) {
+              const error = new Error(
+                `Batch fetcher result not found for '${id}' subqueue in ${this.displayName}`
+              );
+              responses.add(id);
+              results?.set(id, error);
+              this.flushResult(id, error);
+            }
+          });
+
+          resolve();
         })
-        .catch(reject);
+        .catch((e) => {
+          finished = true;
+
+          const error = new Error(
+            `Batch fetcher error for ${this.displayName}`,
+            { cause: e }
+          );
+
+          subqueues.forEach((id) => {
+            if (!responses.has(id)) {
+              responses.add(id);
+              results?.set(id, error);
+              this.flushResult(id, error);
+            }
+          });
+
+          resolve();
+        });
     });
   }
 
