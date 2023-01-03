@@ -300,10 +300,10 @@ export class BurstValve<
   }
 
   /**
-   * Batches fetching of unique identifiers into a single process, waiting
-   * for existing queues if they already exist
+   * Exposes results for fetching each unique identifier as the data becomes available
    *
    * @param subqueues List of unique identifiers to fetch at once
+   * @param streamResultCallback Iterative callback for each result as it is available
    */
   public async stream(
     subqueues: SubqueueKeyType[],
