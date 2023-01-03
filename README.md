@@ -2,7 +2,7 @@
 
 An in memory queue for async processes in high concurrency code paths.
 
-# How it works
+## How it works
 
 Wrap any async method in a fetcher process to create a buffer where there will only ever be a single active request for that method at any given time.
 
@@ -12,42 +12,16 @@ _A very crude example_: given an application that displays public customer infor
 
 ```ts
 export const getCustomer = async (id: string) => {
-  return new Promise((resolve, reject) => {
-    sql.query(
-      "SELECT id, name FROM customers WHERE id = ?",
-      [id],
-      (e, results) => {
-        if (e || !results || !results.length) {
-          reject(e || new Error(`Unknown Error`));
-        } else {
-          resolve(results[0]);
-        }
-      }
-    );
-  });
+  return await sql.query("SELECT id, name FROM customers WHERE id = ?", [id]);
 };
 ```
 
 With this function, every request would hit the database directly. Given the data is unlikely to change while multiple requests are active at the same time, the database call can be wrapped inside a BurstValve instance so that only a single concurrent query is ever active for the specified customer.
 
 ```ts
-const valve = new BurstValve<{ id: string; name: string }>(
-  async (id: string) => {
-    return new Promise((resolve, reject) => {
-      sql.query(
-        "SELECT id, name FROM customers WHERE id = ?",
-        [id],
-        (e, results) => {
-          if (e || !results || !results.length) {
-            reject(e || new Error(`Unknown Error`));
-          } else {
-            resolve(results[0]);
-          }
-        }
-      );
-    });
-  }
-);
+const valve = new BurstValve<Customer>(async (id: string) => {
+  return await sql.query("SELECT id, name FROM customers WHERE id = ?", [id]);
+});
 
 export const getCustomer = async (id: string) => {
   return await valve.fetch(id);
@@ -64,30 +38,13 @@ To better visualize the performance gain, a simple benchmark run was setup to te
 Again, this is a very crude example. Adding caching layer in front of the database call would improve the initial performance significantly. Even then, adding BurstValve would still add a layer of improvement as traffic rate increases.
 
 ```ts
-const valve = new BurstValve<string>(async (id: string) => {
-  return new Promise((resolve, reject) => {
-    memcached.get(`customer:${id}`, (e, data) => {
-      if (data) {
-        return resolve(JSON.parse(data));
-      }
+const valve = new BurstValve<Customer>(async (id: string) => {
+  const customer = await cache.get(`customer:${id}`);
+  if (customer) {
+    return customer;
+  }
 
-      pool.query(
-        "SELECT id, name FROM customers WHERE id = ?",
-        [id],
-        (e, results) => {
-          if (e || !results || !results.length) {
-            reject(e || new Error(`Unknown Error`));
-          } else {
-            const value = results[0];
-
-            memcached.set(`customer:${id}`, JSON.stringify(value), 3600, () => {
-              resolve(value);
-            });
-          }
-        }
-      );
-    });
-  });
+  return await sql.query("SELECT id, name FROM customers WHERE id = ?", [id]);
 });
 ```
 
@@ -96,7 +53,7 @@ const valve = new BurstValve<string>(async (id: string) => {
 | Memcached Direct                             | 23,220 ops/sec ±0.75% | 7,971 ops/sec ±0.14%  | 4,193 ops/sec ±1.76%  |
 | BurstValve                                   | 38,834 ops/sec ±0.72% | 34,557 ops/sec ±1.01% | 32,193 ops/sec ±1.03% |
 
-# Batching
+## Batching
 
 BurstValve comes with a unique batching approach, where requests for multiple unique identifiers can occur individually with parallelism. Consider the following:
 
@@ -125,7 +82,7 @@ In the above example, the valve was able to detect that the identifiers `3` & `4
 
 ### Early Writing
 
-To futher the concept of individual queues for batch runs, the batch fetcher process provides an early writing mechanism for broadcasting results as they come in. This gives the ability for queues to be drained as quickly as possible.
+To further the concept of individual queues for batch runs, the batch fetcher process provides an early writing mechanism for broadcasting results as they come in. This gives the ability for queues to be drained as quickly as possible.
 
 ```ts
 const valve = new BurstValve<number, number>({
@@ -148,7 +105,7 @@ const [run1, run2, run3] = await Promise.all([
 // Resolution Order: run2, run3, run1
 ```
 
-**Note:** While early writing may be used in conjunction with overal batch process returned results, anything early written will take priority over returned results.
+**Note:** While early writing may be used in conjunction with overall batch process returned results, anything early written will take priority over returned results.
 
 ### Benchmark
 
@@ -165,3 +122,24 @@ And similar to the fetch suite at the top, gains are amplified when putting a me
 | ----------------------------------------------------- | --------------------- | --------------------- | --------------------- |
 | Direct Call                                           | 16,735 ops/sec ±2.25% | 7,090 ops/sec ±1.84%  | 3,911 ops/sec ±0.76%  |
 | BurstValve                                            | 31,030 ops/sec ±1.24% | 23,106 ops/sec ±1.27% | 16,360 ops/sec ±1.02% |
+
+## Streaming
+
+The stream method provides a callback style mechanism to obtain access to data as soon at it is available (anything that leverages early writing). Any identifiers requested through the stream interface will follow the batch paradigm, where overlapping ids will share responses to reduce active requests down to a single concurrency.
+
+```ts
+const valve = new BurstValve<number, number>({
+  batch: async (ids, earlyWrite) => {
+    await sleep(50);
+    earlyWrite(1, 50);
+    await sleep(50);
+    earlyWrite(2, 100);
+    await sleep(50);
+    earlyWrite(3, 150);
+  },
+});
+
+await valve.stream([1, 2, 3], async (id, result) => {
+  response.write({ id, result }); // Some external request/response stream
+});
+```

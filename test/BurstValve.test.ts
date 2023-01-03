@@ -528,4 +528,128 @@ describe("BurstValve", () => {
       });
     });
   });
+
+  describe("stream", () => {
+    test("should stream results as they come in", async () => {
+      const responses: Array<{
+        id: number;
+        result: number | Error;
+      }> = [];
+
+      let earlyWrite: (subqueue: number, result: number | Error) => void = () =>
+        undefined;
+      let batchResolve: () => void = () => undefined;
+
+      const valve = new BurstValve<number, number>({
+        batch: async (_ids, ew) => {
+          earlyWrite = ew;
+          return new Promise<void>((resolve) => {
+            batchResolve = resolve;
+          });
+        },
+      });
+
+      const valveStreamPromise = valve.stream(
+        [1, 2, 3, 4],
+        async (id, result) => {
+          responses.push({ id, result });
+        }
+      );
+
+      // Confirm no auto responses
+      expect(responses).toEqual([]);
+
+      // Write out first response
+      earlyWrite(2, 200);
+      await wait();
+      expect(responses).toEqual([
+        {
+          id: 2,
+          result: 200,
+        },
+      ]);
+
+      // Write out another response
+      earlyWrite(4, 400);
+      await wait();
+      expect(responses).toEqual([
+        {
+          id: 2,
+          result: 200,
+        },
+        {
+          id: 4,
+          result: 400,
+        },
+      ]);
+
+      // Write out an error
+      const mockError = new Error(`Mock Write Error`);
+      earlyWrite(3, mockError);
+      await wait();
+      expect(responses).toEqual([
+        {
+          id: 2,
+          result: 200,
+        },
+        {
+          id: 4,
+          result: 400,
+        },
+        {
+          id: 3,
+          result: mockError,
+        },
+      ]);
+
+      // Confirm any unwritten
+      batchResolve();
+      await wait();
+      expect(responses).toEqual([
+        {
+          id: 2,
+          result: 200,
+        },
+        {
+          id: 4,
+          result: 400,
+        },
+        {
+          id: 3,
+          result: mockError,
+        },
+        {
+          id: 1,
+          result: new Error(
+            `Batch fetcher result not found for '1' subqueue in Burst Valve`
+          ),
+        },
+      ]);
+
+      // Resolve the batch process, and make sure the stream is resolved
+      await valveStreamPromise;
+    });
+
+    test("should only send batch fetch request for keys that are not already active", async () => {
+      const fetchIds: number[][] = [];
+      const valve = new BurstValve<number, number>({
+        batch: async (ids) => {
+          fetchIds.push(ids);
+          return new Promise<void>(() => undefined);
+        },
+      });
+
+      // Open up batch stream for 2 & 4 keys
+      valve.batch([2, 4]);
+      expect(fetchIds).toEqual([[2, 4]]);
+
+      // Stream results for 1-4 keys, expecting only 1 & 3 to be requested
+      // as 2 & 4 are already from above
+      valve.stream([1, 2, 3, 4], async () => undefined);
+      expect(fetchIds).toEqual([
+        [2, 4],
+        [1, 3],
+      ]);
+    });
+  });
 });
