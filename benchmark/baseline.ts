@@ -73,6 +73,13 @@ suite
       await earlyWriteValve.batch([1, 2, 3, 4, 5]);
       deferred.resolve();
     },
+  })
+  .add(`unsafeBatch single call`, {
+    defer: true,
+    fn: async (deferred: Benchmark.Deferred) => {
+      await earlyWriteValve.unsafeBatch([1, 2, 3, 4, 5]);
+      deferred.resolve();
+    },
   });
 
 [5, 25, 100].forEach((concurrent) => {
@@ -116,6 +123,17 @@ suite
         const stack: Promise<(number | Error)[]>[] = [];
         for (let i = 0; i < concurrent; i++) {
           stack.push(earlyWriteValve.batch([1, 2, 3, 4, 5]));
+        }
+        await Promise.all(stack);
+        deferred.resolve();
+      },
+    })
+    .add(`unsafeBatch / ${concurrent} concurrent`, {
+      defer: true,
+      fn: async (deferred: Benchmark.Deferred) => {
+        const stack: Promise<(number | Error)[]>[] = [];
+        for (let i = 0; i < concurrent; i++) {
+          stack.push(earlyWriteValve.unsafeBatch([1, 2, 3, 4, 5]));
         }
         await Promise.all(stack);
         deferred.resolve();

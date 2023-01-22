@@ -123,6 +123,10 @@ And similar to the fetch suite at the top, gains are amplified when putting a me
 | Direct Call                                           | 16,735 ops/sec ±2.25% | 7,090 ops/sec ±1.84%  | 3,911 ops/sec ±0.76%  |
 | BurstValve                                            | 31,030 ops/sec ±1.24% | 23,106 ops/sec ±1.27% | 16,360 ops/sec ±1.02% |
 
+## Unsafe Batch
+
+The `unsafeBatch` method is for cases where batch fetching will throw errors instead of returning them. This provides a typesafe way to fetch an array of only results and not have to do error checks on each entry. `unsafeBatch` uses the same internal mechanism as `batch`, giving it the same performance, just passing a modifier to trigger raising of exceptions instead of returning.
+
 ## Streaming
 
 The stream method provides a callback style mechanism to obtain access to data as soon at it is available (anything that leverages early writing). Any identifiers requested through the stream interface will follow the batch paradigm, where overlapping ids will share responses to reduce active requests down to a single concurrency.

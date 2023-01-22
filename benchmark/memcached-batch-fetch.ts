@@ -80,7 +80,7 @@ suite
       deferred.resolve();
     },
   })
-  .add("Burst Valve / 5 Concurrent", {
+  .add("Burst Valve - Batch / 5 Concurrent", {
     defer: true,
     fn: async (deferred: Benchmark.Deferred) => {
       await Promise.all([
@@ -93,7 +93,7 @@ suite
       deferred.resolve();
     },
   })
-  .add("Burst Valve / 25 Concurrent", {
+  .add("Burst Valve - Batch / 25 Concurrent", {
     defer: true,
     fn: async (deferred: Benchmark.Deferred) => {
       const stack: Promise<(Customer | Error)[]>[] = [];
@@ -104,12 +104,47 @@ suite
       deferred.resolve();
     },
   })
-  .add("Burst Valve / 50 Concurrent", {
+  .add("Burst Valve - Batch / 50 Concurrent", {
     defer: true,
     fn: async (deferred: Benchmark.Deferred) => {
       const stack: Promise<(Customer | Error)[]>[] = [];
       for (let i = 0; i < 50; i++) {
         stack.push(batchValve.batch([`1`, `2`, `3`]));
+      }
+      await Promise.all(stack);
+      deferred.resolve();
+    },
+  })
+  .add("Burst Valve - Unsafe Batch / 5 Concurrent", {
+    defer: true,
+    fn: async (deferred: Benchmark.Deferred) => {
+      await Promise.all([
+        batchValve.unsafeBatch([`1`, `2`, `3`]),
+        batchValve.unsafeBatch([`1`, `2`, `3`]),
+        batchValve.unsafeBatch([`1`, `2`, `3`]),
+        batchValve.unsafeBatch([`1`, `2`, `3`]),
+        batchValve.unsafeBatch([`1`, `2`, `3`]),
+      ]);
+      deferred.resolve();
+    },
+  })
+  .add("Burst Valve - Unsafe Batch / 25 Concurrent", {
+    defer: true,
+    fn: async (deferred: Benchmark.Deferred) => {
+      const stack: Promise<(Customer | Error)[]>[] = [];
+      for (let i = 0; i < 25; i++) {
+        stack.push(batchValve.unsafeBatch([`1`, `2`, `3`]));
+      }
+      await Promise.all(stack);
+      deferred.resolve();
+    },
+  })
+  .add("Burst Valve - Unsafe Batch / 50 Concurrent", {
+    defer: true,
+    fn: async (deferred: Benchmark.Deferred) => {
+      const stack: Promise<(Customer | Error)[]>[] = [];
+      for (let i = 0; i < 50; i++) {
+        stack.push(batchValve.unsafeBatch([`1`, `2`, `3`]));
       }
       await Promise.all(stack);
       deferred.resolve();
