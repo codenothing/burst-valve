@@ -24,7 +24,7 @@ export type FetcherProcess<
  * @type FetchResult Result type for the valve
  * @type SubqueueKeyType Subqueue unique identifier type
  * @param subqueues Unique keys of the subqueues being run
- * @param earlyWrite Mechanism for unblocking subqueues as the data is availiable
+ * @param earlyWrite Mechanism for unblocking subqueues as the data is available
  */
 export type BatchFetcherProcess<
   FetchResult,
@@ -216,7 +216,7 @@ export class BurstValve<
         }
       }
 
-      // Run the fetcher process and flusth the results
+      // Run the fetcher process and flush the results
       fetcher(subqueue)
         .then((value) => this.flushResult(subqueue, value))
         .catch((e) =>
