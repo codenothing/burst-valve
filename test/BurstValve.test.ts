@@ -529,6 +529,105 @@ describe("BurstValve", () => {
     });
   });
 
+  describe("unsafeBatch", () => {
+    test("should only run the batch fetcher once for all the keys", async () => {
+      let ran = 0;
+      const resultValue: FetchResult = { foo: "foobar" };
+      const valve = new BurstValve<FetchResult>({
+        batch: async (ids) => {
+          expect(ids).toEqual(["a", "b", "c"]);
+          ran++;
+          return ids.map(() => resultValue);
+        },
+      });
+
+      expect(await valve.unsafeBatch(["a", "b", "c"])).toEqual([
+        { foo: "foobar" },
+        { foo: "foobar" },
+        { foo: "foobar" },
+      ]);
+      expect(ran).toStrictEqual(1);
+    });
+
+    test("should raise exception thrown in the batch fetcher", async () => {
+      const valve = new BurstValve<FetchResult>({
+        batch: async () => {
+          throw new Error(`Batch Unsafe Mock Error`);
+        },
+      });
+
+      try {
+        await valve.unsafeBatch(["a", "b", "c"]);
+        throw new Error("Should Never Get Here");
+      } catch (e) {
+        expect(e).toBeInstanceOf(Error);
+        expect((e as Error).message).toEqual(
+          "Batch fetcher error for Burst Valve"
+        );
+        expect((e as Error).cause).toBeInstanceOf(Error);
+        expect(((e as Error).cause as Error).message).toEqual(
+          "Batch Unsafe Mock Error"
+        );
+      }
+    });
+
+    test("should throw any exceptions that are early written", async () => {
+      const valve = new BurstValve<FetchResult>({
+        batch: async (ids, earlyWrite) => {
+          await wait();
+          earlyWrite(ids[0], new Error(`Batch Unsafe Mock Error`));
+        },
+      });
+
+      try {
+        await valve.unsafeBatch(["a", "b", "c"]);
+        throw new Error("Should Never Get Here");
+      } catch (e) {
+        expect(e).toBeInstanceOf(Error);
+        expect((e as Error).message).toEqual(
+          "Batch fetcher error for Burst Valve"
+        );
+        expect((e as Error).cause).toBeInstanceOf(Error);
+        expect(((e as Error).cause as Error).message).toEqual(
+          "Batch Unsafe Mock Error"
+        );
+      }
+    });
+
+    test("should throw any exceptions raised by an earlier queue", async () => {
+      let counter = 0;
+      const valve = new BurstValve<number, number>({
+        batch: async (ids, earlyWrite) => {
+          await wait();
+          counter++;
+          ids.forEach((id) =>
+            earlyWrite(
+              id,
+              new Error(`Batch Unsafe Mock Error id:${id} - count:${counter}`)
+            )
+          );
+        },
+      });
+
+      // Trigger first fetch to build the queues
+      valve.unsafeBatch([1, 2, 3]).catch(() => undefined);
+
+      try {
+        await valve.unsafeBatch([1, 5, 6]);
+        throw new Error("Should Never Get Here");
+      } catch (e) {
+        expect(e).toBeInstanceOf(Error);
+        expect((e as Error).message).toEqual(
+          "Batch fetcher error for Burst Valve"
+        );
+        expect((e as Error).cause).toBeInstanceOf(Error);
+        expect(((e as Error).cause as Error).message).toEqual(
+          `Batch Unsafe Mock Error id:1 - count:1`
+        );
+      }
+    });
+  });
+
   describe("stream", () => {
     test("should stream results as they come in", async () => {
       const responses: Array<{

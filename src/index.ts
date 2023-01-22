@@ -8,6 +8,7 @@ interface PromiseStore<Result> {
 
 /**
  * Method for running a single process
+ *
  * @type FetchResult Result type for the valve
  * @type SubqueueKeyType Subqueue unique identifier type
  * @param subqueue Unique key of the subqueue being run
@@ -19,6 +20,7 @@ export type FetcherProcess<
 
 /**
  * Method for running a batch fetch process
+ *
  * @type FetchResult Result type for the valve
  * @type SubqueueKeyType Subqueue unique identifier type
  * @param subqueues Unique keys of the subqueues being run
@@ -57,6 +59,7 @@ export interface BurstValveParams<DrainResult, SubqueueKeyType> {
 
 /**
  * Concurrent queue for a single (or batch) asynchronous action
+ *
  * @type DrainResult Result type when queue is drained
  * @type SubqueueKeyType Error type when queue is drained with an error
  */
@@ -94,12 +97,14 @@ export class BurstValve<
 
   /**
    * Creates an instance of BurstValve with a custom fetcher
+   *
    * @param fetcher Fetcher process for single concurrency process running
    */
   constructor(fetcher: FetcherProcess<DrainResult, SubqueueKeyType>);
 
   /**
    * Creates an instance of BurstValve with a custom display name and fetcher
+   *
    * @param displayName Name for the valve
    * @param fetcher Fetcher process for single concurrency process running
    */
@@ -110,12 +115,14 @@ export class BurstValve<
 
   /**
    * Creates an instance of BurstValve with configurable parameters
+   *
    * @param config Burst value configuration
    */
   constructor(config: BurstValveParams<DrainResult, SubqueueKeyType>);
 
   /**
    * Creates an instance of BurstValve with a custom display name and fetcher
+   *
    * @param displayName Name for the valve, fetcher process, or burst configuration
    * @param fetcher Fetcher process for single concurrency process running
    */
@@ -157,6 +164,7 @@ export class BurstValve<
 
   /**
    * Determines if queue (or subqueue) has an active action being taken
+   *
    * @param subqueue Unique identifier of the subqueue to check activity.
    */
   public isActive(subqueue?: SubqueueKeyType): boolean {
@@ -169,46 +177,29 @@ export class BurstValve<
 
   /**
    * Leverages the current valve to only have a single running process of a function
+   *
    * @param subqueue Unique identifier of the subqueue to fetch data for
    */
   public async fetch(subqueue?: SubqueueKeyType): Promise<DrainResult> {
-    return new Promise<DrainResult>((resolve, reject) => {
-      // Default to batch fetcher when defined
-      if (this.batchFetcher) {
-        if (subqueue === undefined) {
-          return reject(
-            new Error(
-              `Cannot make un-identified fetch requests when batching is enabled for ${this.displayName}`
-            )
-          );
-        }
-
-        return this.batch([subqueue])
-          .catch(reject)
-          .then((result) => {
-            if (result) {
-              if (result[0] instanceof Error) {
-                reject(result[0]);
-              } else {
-                resolve(result[0] as DrainResult);
-              }
-            } else {
-              reject(
-                new Error(
-                  `Batch fetcher process result not found for ${this.displayName}`
-                )
-              );
-            }
-          });
-      }
-      // Safety net
-      else if (!this.fetcher) {
-        return reject(
-          new Error(`Fetch process not defined for ${this.displayName}`)
+    if (this.batchFetcher) {
+      if (subqueue === undefined) {
+        throw new Error(
+          `Cannot make un-identified fetch requests when batching is enabled for ${this.displayName}`
         );
       }
+
+      return (await this.unsafeBatch([subqueue]))[0];
+    }
+
+    // Type safety for fetcher process
+    const fetcher = this.fetcher;
+    if (!fetcher) {
+      throw new Error(`Fetch process not defined for ${this.displayName}`);
+    }
+
+    return new Promise<DrainResult>((resolve, reject) => {
       // Subqueue defined
-      else if (subqueue) {
+      if (subqueue) {
         const list = this.subqueues.get(subqueue);
         if (list) {
           return list.push({ resolve, reject });
@@ -226,7 +217,7 @@ export class BurstValve<
       }
 
       // Run the fetcher process and flusth the results
-      this.fetcher(subqueue)
+      fetcher(subqueue)
         .then((value) => this.flushResult(subqueue, value))
         .catch((e) =>
           this.flushResult(
@@ -246,57 +237,19 @@ export class BurstValve<
   public async batch(
     subqueues: SubqueueKeyType[]
   ): Promise<Array<DrainResult | Error>> {
-    const results = new Map<SubqueueKeyType, DrainResult | Error>();
-    const fetchBatchKeys: SubqueueKeyType[] = [];
-    const fetchPromises: Promise<void>[] = [];
+    return this.runBatch(subqueues);
+  }
 
-    // Look for active subqueue for each identifier before creating one
-    for (const id of subqueues) {
-      const list = this.subqueues.get(id);
-
-      // Dedupe fetch keys
-      if (fetchBatchKeys.includes(id)) {
-        continue;
-      }
-      // Wait for existing queue if it exists
-      else if (list) {
-        fetchPromises.push(
-          new Promise<void>((queuedResolve) => {
-            list.push({
-              resolve: (value) => {
-                if (!results.has(id)) {
-                  results.set(id, value);
-                }
-                queuedResolve();
-              },
-              reject: (error) => {
-                if (!results.has(id)) {
-                  results.set(id, error);
-                }
-                queuedResolve();
-              },
-            });
-          })
-        );
-      }
-      // Mark subqueue as active before adding fetch key
-      else {
-        this.subqueues.set(id, []);
-        fetchBatchKeys.push(id);
-      }
-    }
-
-    // Only trigger batch fetcher if there are inactive keys to fetch
-    const batcherPromise =
-      fetchBatchKeys.length > 0
-        ? this.runBatchFetcher(fetchBatchKeys, results)
-        : Promise.resolve();
-
-    // Wait for all queues to resolve
-    await Promise.all([batcherPromise, ...fetchPromises]);
-
-    // Return the results
-    return subqueues.map((id) => results.get(id) as DrainResult | Error);
+  /**
+   * Same as batch, except throws any errors that are found during the fetching
+   * process rather returning them. Simplifies the return array to only results
+   *
+   * @param subqueues List of unique identifiers to fetch at once
+   */
+  public async unsafeBatch(
+    subqueues: SubqueueKeyType[]
+  ): Promise<Array<DrainResult>> {
+    return this.runBatch(subqueues, true) as Promise<Array<DrainResult>>;
   }
 
   /**
@@ -350,13 +303,81 @@ export class BurstValve<
   }
 
   /**
+   * Normalized runner for batch and batchUnsafe
+   *
+   * @param subqueues List of unique identifiers to fetch at once
+   * @param raiseExceptions Indicates if exceptions should be raised when found
+   */
+  private async runBatch(
+    subqueues: SubqueueKeyType[],
+    raiseExceptions?: true
+  ): Promise<Array<DrainResult | Error>> {
+    const results = new Map<SubqueueKeyType, DrainResult | Error>();
+    const fetchBatchKeys: SubqueueKeyType[] = [];
+    const fetchPromises: Promise<void>[] = [];
+
+    // Look for active subqueue for each identifier before creating one
+    for (const id of subqueues) {
+      const list = this.subqueues.get(id);
+
+      // Dedupe fetch keys
+      if (fetchBatchKeys.includes(id)) {
+        continue;
+      }
+      // Wait for existing queue if it exists
+      else if (list) {
+        fetchPromises.push(
+          new Promise<void>((queuedResolve, queuedReject) => {
+            list.push({
+              resolve: (value) => {
+                if (!results.has(id)) {
+                  results.set(id, value);
+                }
+                queuedResolve();
+              },
+              reject: (error) => {
+                if (raiseExceptions) {
+                  return queuedReject(error);
+                } else if (!results.has(id)) {
+                  results.set(id, error);
+                }
+                queuedResolve();
+              },
+            });
+          })
+        );
+      }
+      // Mark subqueue as active before adding fetch key
+      else {
+        this.subqueues.set(id, []);
+        fetchBatchKeys.push(id);
+      }
+    }
+
+    // Only trigger batch fetcher if there are inactive keys to fetch
+    const batcherPromise =
+      fetchBatchKeys.length > 0
+        ? this.runBatchFetcher(fetchBatchKeys, results, raiseExceptions)
+        : Promise.resolve();
+
+    // Wait for all queues to resolve
+    await Promise.all([...fetchPromises, batcherPromise]);
+
+    // Return the results
+    return subqueues.map((id) => results.get(id) as DrainResult | Error);
+  }
+
+  /**
    * Runs the user defined batch fetcher process
+   *
    * @param subqueues List of unique identifiers to fetch at once
    * @param results Optional list of shared results
+   * @param raiseExceptions Indicates if errors should be thrown rather than returned
    */
   private async runBatchFetcher(
     subqueues: SubqueueKeyType[],
-    results?: Map<SubqueueKeyType, DrainResult | Error>
+    results?: Map<SubqueueKeyType, DrainResult | Error>,
+    raiseExceptions?: true
   ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       if (!this.batchFetcher) {
@@ -379,6 +400,10 @@ export class BurstValve<
         }
         // Do not override previous results as they have already been flushed
         else if (!responses.has(key)) {
+          if (raiseExceptions && value instanceof Error) {
+            throw value;
+          }
+
           responses.add(key);
           results?.set(key, value);
           this.flushResult(key, value);
@@ -410,8 +435,7 @@ export class BurstValve<
                 }
               });
 
-              resolve();
-              return;
+              return resolve();
             }
             // Batch process returns map of results
             else if (batchResult instanceof Map) {
@@ -455,13 +479,18 @@ export class BurstValve<
             }
           });
 
-          resolve();
+          if (raiseExceptions) {
+            reject(error);
+          } else {
+            resolve();
+          }
         });
     });
   }
 
   /**
    * Flushes the queue specified with the result passed
+   *
    * @param subqueue Unique identifier tied to the fetch process
    * @param result Successful/Failed result of the fetch process
    */
