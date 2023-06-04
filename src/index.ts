@@ -8,10 +8,8 @@ interface PromiseStore<Result> {
 
 /**
  * Method for running a single process
- *
- * @type FetchResult Result type for the valve
- * @type SubqueueKeyType Subqueue unique identifier type
- * @param subqueue Unique key of the subqueue being run
+ * @param {SubqueueKeyType} [subqueue] Unique key of the subqueue being run
+ * @returns {FetchResult} Result of the process
  */
 export type FetcherProcess<
   FetchResult,
@@ -20,11 +18,9 @@ export type FetcherProcess<
 
 /**
  * Method for running a batch fetch process
- *
- * @type FetchResult Result type for the valve
- * @type SubqueueKeyType Subqueue unique identifier type
- * @param subqueues Unique keys of the subqueues being run
- * @param earlyWrite Mechanism for unblocking subqueues as the data is available
+ * @param {SubqueueKeyType[]} subqueues Unique keys of the subqueues being run
+ * @param {Function} earlyWrite Mechanism for unblocking subqueues as the data is available
+ * @returns {FetchResult[] | Error[] | Map | void} Results in array/map format. Nothing should be returned when using the earlyWrite mechanism
  */
 export type BatchFetcherProcess<
   FetchResult,
@@ -59,9 +55,9 @@ export interface BurstValveParams<DrainResult, SubqueueKeyType> {
 
 /**
  * Only wraps non Error instances in an exception
- *
- * @param error Unknown error raised
- * @param messagePrefix Prefix string when error is not an exception
+ * @param {unknown} error Unknown error raised
+ * @param {string} messagePrefix Prefix string when error is not an exception
+ * @returns {Error} Error instance of the exception passed, wrapped if non exception
  */
 const optionallyWrapError = (error: unknown, messagePrefix: string): Error =>
   error instanceof Error
@@ -70,9 +66,6 @@ const optionallyWrapError = (error: unknown, messagePrefix: string): Error =>
 
 /**
  * Concurrent queue for a single (or batch) asynchronous action
- *
- * @type DrainResult Result type when queue is drained
- * @type SubqueueKeyType Error type when queue is drained with an error
  */
 export class BurstValve<
   DrainResult,
@@ -80,16 +73,24 @@ export class BurstValve<
 > {
   /**
    * Display name for the valve
+   * @type {string}
+   * @readonly
    */
   public readonly displayName: string;
 
   /**
    * Fetcher for single concurrent running of a function
+   * @type {FetcherProcess | undefined}
+   * @readonly
+   * @private
    */
   private readonly fetcher?: FetcherProcess<DrainResult, SubqueueKeyType>;
 
   /**
    * Fetcher for batch of unique identifiers to run once
+   * @type {BatchFetcherProcess | undefined}
+   * @readonly
+   * @private
    */
   private readonly batchFetcher?: BatchFetcherProcess<
     DrainResult,
@@ -98,26 +99,28 @@ export class BurstValve<
 
   /**
    * Queue of promise callbacks
+   * @type {PromiseStore[]}
+   * @private
    */
   private queue?: PromiseStore<DrainResult>[];
 
   /**
    * Keyed subqueues of promise callbacks
+   * @type {Map}
+   * @private
    */
   private subqueues = new Map<SubqueueKeyType, PromiseStore<DrainResult>[]>();
 
   /**
    * Creates an instance of BurstValve with a custom fetcher
-   *
-   * @param fetcher Fetcher process for single concurrency process running
+   * @param {FetcherProcess} fetcher Fetcher process for single concurrency process running
    */
   constructor(fetcher: FetcherProcess<DrainResult, SubqueueKeyType>);
 
   /**
    * Creates an instance of BurstValve with a custom display name and fetcher
-   *
-   * @param displayName Name for the valve
-   * @param fetcher Fetcher process for single concurrency process running
+   * @param {string} displayName Name for the valve
+   * @param {FetcherProcess} fetcher Fetcher process for single concurrency process running
    */
   constructor(
     displayName: string,
@@ -126,16 +129,14 @@ export class BurstValve<
 
   /**
    * Creates an instance of BurstValve with configurable parameters
-   *
-   * @param config Burst value configuration
+   * @param {BurstValveParams} config Burst value configuration
    */
   constructor(config: BurstValveParams<DrainResult, SubqueueKeyType>);
 
   /**
    * Creates an instance of BurstValve with a custom display name and fetcher
-   *
-   * @param displayName Name for the valve, fetcher process, or burst configuration
-   * @param fetcher Fetcher process for single concurrency process running
+   * @param {string | FetcherProcess | BurstValveParams} displayName Name for the valve, fetcher process, or burst configuration
+   * @param {FetcherProcess} [fetcher] Fetcher process for single concurrency process running
    */
   constructor(
     displayName:
@@ -175,8 +176,8 @@ export class BurstValve<
 
   /**
    * Determines if queue (or subqueue) has an active action being taken
-   *
-   * @param subqueue Unique identifier of the subqueue to check activity.
+   * @param {SubqueueKeyType} [subqueue] Unique identifier of the subqueue to check activity.
+   * @returns {Boolean} True/False indicating if queue (or subqueue) is active
    */
   public isActive(subqueue?: SubqueueKeyType): boolean {
     if (subqueue !== undefined) {
@@ -188,8 +189,8 @@ export class BurstValve<
 
   /**
    * Leverages the current valve to only have a single running process of a function
-   *
-   * @param subqueue Unique identifier of the subqueue to fetch data for
+   * @param {SubqueueKeyType} [subqueue] Unique identifier of the subqueue to fetch data for
+   * @returns {DrainResult} Result of the fetch
    */
   public async fetch(subqueue?: SubqueueKeyType): Promise<DrainResult> {
     if (this.batchFetcher) {
@@ -242,8 +243,8 @@ export class BurstValve<
   /**
    * Batches fetching of unique identifiers into a single process, waiting
    * for existing queues if they already exist
-   *
-   * @param subqueues List of unique identifiers to fetch at once
+   * @param {SubqueueKeyType[]} subqueues List of unique identifiers to fetch at once
+   * @returns {Array<DrainResult | Error>} List of fetch results or exceptions
    */
   public async batch(
     subqueues: SubqueueKeyType[]
@@ -254,8 +255,8 @@ export class BurstValve<
   /**
    * Same as batch, except throws any errors that are found during the fetching
    * process rather returning them. Simplifies the return array to only results
-   *
-   * @param subqueues List of unique identifiers to fetch at once
+   * @param {SubqueueKeyType[]} subqueues List of unique identifiers to fetch at once
+   * @returns {DrainResult[]} List of batch results
    */
   public async unsafeBatch(
     subqueues: SubqueueKeyType[]
@@ -265,9 +266,8 @@ export class BurstValve<
 
   /**
    * Exposes results for fetching each unique identifier as the data becomes available
-   *
-   * @param subqueues List of unique identifiers to fetch at once
-   * @param streamResultCallback Iterative callback for each result as it is available
+   * @param {SubqueueKeyType[]} subqueues List of unique identifiers to fetch at once
+   * @param {Function} streamResultCallback Iterative callback for each result as it is available
    */
   public async stream(
     subqueues: SubqueueKeyType[],
@@ -315,8 +315,8 @@ export class BurstValve<
 
   /**
    * Normalized runner for batch and batchUnsafe
-   *
-   * @param subqueues List of unique identifiers to fetch at once
+   * @param {SubqueueKeyType[]} subqueues List of unique identifiers to fetch at once
+   * @returns {Array<DrainResult | Error>} List of batch results or exceptions
    */
   private async runBatch(
     subqueues: SubqueueKeyType[]
@@ -324,9 +324,9 @@ export class BurstValve<
 
   /**
    * Normalized runner for batch and batchUnsafe
-   *
-   * @param subqueues List of unique identifiers to fetch at once
-   * @param raiseExceptions Indicates if exceptions should be raised when found
+   * @param {SubqueueKeyType} subqueues List of unique identifiers to fetch at once
+   * @param {Boolean} raiseExceptions Indicates if exceptions should be raised when found
+   * @returns {DrainResult[]} List of batch results
    */
   private async runBatch(
     subqueues: SubqueueKeyType[],
@@ -335,9 +335,9 @@ export class BurstValve<
 
   /**
    * Normalized runner for batch and batchUnsafe
-   *
-   * @param subqueues List of unique identifiers to fetch at once
-   * @param raiseExceptions Indicates if exceptions should be raised when found
+   * @param {SubqueueKeyType[]} subqueues List of unique identifiers to fetch at once
+   * @param {Boolean} [raiseExceptions] Indicates if exceptions should be raised when found
+   * @returns {Array<DrainResult | Error>} List of batch results or exceptions
    */
   private async runBatch(
     subqueues: SubqueueKeyType[],
@@ -400,10 +400,9 @@ export class BurstValve<
 
   /**
    * Runs the user defined batch fetcher process
-   *
-   * @param subqueues List of unique identifiers to fetch at once
-   * @param results Optional list of shared results
-   * @param raiseExceptions Indicates if errors should be thrown rather than returned
+   * @param {SubqueueKeyType[]} subqueues List of unique identifiers to fetch at once
+   * @param {Map} [results] Optional list of shared results
+   * @param {Boolean} [raiseExceptions] Indicates if errors should be thrown rather than returned
    */
   private async runBatchFetcher(
     subqueues: SubqueueKeyType[],
@@ -521,14 +520,13 @@ export class BurstValve<
 
   /**
    * Flushes the queue specified with the result passed
-   *
-   * @param subqueue Unique identifier tied to the fetch process
-   * @param result Successful/Failed result of the fetch process
+   * @param {SubqueueKeyType | undefined} subqueue Unique identifier tied to the fetch process
+   * @param {DrainResult | Error} result Successful/Failed result of the fetch process
    */
   private flushResult(
     subqueue: SubqueueKeyType | undefined,
     result: DrainResult | Error
-  ) {
+  ): void {
     // Find the relevant queue
     let list: PromiseStore<DrainResult>[] = [];
     if (subqueue !== undefined) {
