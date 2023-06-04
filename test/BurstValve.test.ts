@@ -107,7 +107,7 @@ describe("BurstValve", () => {
         expect(ran).toStrictEqual(1);
       });
 
-      test("should wrap any fetcher errors before raising exceptions", async () => {
+      test("should propagate exceptions raised from fetcher processes", async () => {
         let ran = 0;
         const error = new Error(`Drain Error`);
         const valve = new BurstValve<FetchResult>(async () => {
@@ -121,11 +121,36 @@ describe("BurstValve", () => {
           valve.fetch().catch((reason) => reason),
         ]);
         expect(run1).toBeInstanceOf(Error);
-        expect(run1.message).toMatch(`Fetcher error for Burst Valve`);
-        expect(run1.cause).toEqual(error);
+        expect(run1.message).toStrictEqual(`Drain Error`);
+        expect(run1.cause).toStrictEqual(undefined);
         expect(run2).toBeInstanceOf(Error);
-        expect(run2.message).toMatch(`Fetcher error for Burst Valve`);
-        expect(run2.cause).toEqual(error);
+        expect(run2.message).toStrictEqual(`Drain Error`);
+        expect(run2.cause).toStrictEqual(undefined);
+        expect(ran).toStrictEqual(1);
+      });
+
+      test("should wrap any fetcher non-Error instances before raising exceptions", async () => {
+        let ran = 0;
+        const valve = new BurstValve<FetchResult>(async () => {
+          ran++;
+          await wait();
+          throw `Drain Error`;
+        });
+
+        const [run1, run2] = await Promise.all([
+          valve.fetch().catch((reason) => reason),
+          valve.fetch().catch((reason) => reason),
+        ]);
+        expect(run1).toBeInstanceOf(Error);
+        expect(run1.message).toStrictEqual(
+          `Fetcher error for Burst Valve: Drain Error`
+        );
+        expect(run1.cause).toStrictEqual(`Drain Error`);
+        expect(run2).toBeInstanceOf(Error);
+        expect(run2.message).toStrictEqual(
+          `Fetcher error for Burst Valve: Drain Error`
+        );
+        expect(run2.cause).toStrictEqual(`Drain Error`);
         expect(ran).toStrictEqual(1);
       });
     });
@@ -165,7 +190,7 @@ describe("BurstValve", () => {
         });
       });
 
-      test("should wrap all fetcher errors before raising exceptions", async () => {
+      test("should propagate all exceptions raised from fetcher processes", async () => {
         const runners: Record<string, number> = {};
         const valve = new BurstValve<FetchResult, string>(
           "Base Fetcher",
@@ -190,24 +215,69 @@ describe("BurstValve", () => {
           valve.fetch(`subqueue2`).catch((reason) => reason),
         ]);
         expect(run1).toBeInstanceOf(Error);
-        expect(run1.message).toEqual(`Fetcher error for Base Fetcher`);
-        expect(run1.cause).toBeInstanceOf(Error);
-        expect(run1.cause.message).toEqual(`Drain subqueue1 Error`);
+        expect(run1.message).toStrictEqual(`Drain subqueue1 Error`);
+        expect(run1.cause).toStrictEqual(undefined);
 
         expect(run2).toBeInstanceOf(Error);
-        expect(run2.message).toEqual(`Fetcher error for Base Fetcher`);
-        expect(run2.cause).toBeInstanceOf(Error);
-        expect(run2.cause.message).toEqual(`Drain subqueue1 Error`);
+        expect(run2.message).toEqual(`Drain subqueue1 Error`);
+        expect(run2.cause).toStrictEqual(undefined);
 
         expect(run3).toBeInstanceOf(Error);
-        expect(run3.message).toEqual(`Fetcher error for Base Fetcher`);
-        expect(run3.cause).toBeInstanceOf(Error);
-        expect(run3.cause.message).toEqual(`Drain subqueue2 Error`);
+        expect(run3.message).toEqual(`Drain subqueue2 Error`);
+        expect(run3.cause).toStrictEqual(undefined);
 
         expect(run4).toBeInstanceOf(Error);
-        expect(run4.message).toEqual(`Fetcher error for Base Fetcher`);
-        expect(run4.cause).toBeInstanceOf(Error);
-        expect(run4.cause.message).toEqual(`Drain subqueue2 Error`);
+        expect(run4.message).toEqual(`Drain subqueue2 Error`);
+        expect(run4.cause).toStrictEqual(undefined);
+      });
+
+      test("should wrap all fetcher non-Error instances before raising exceptions", async () => {
+        const runners: Record<string, number> = {};
+        const valve = new BurstValve<FetchResult, string>(
+          "Base Fetcher",
+          async (subqueue?: string) => {
+            if (!subqueue) {
+              throw new Error(`Subqueue not defined`);
+            } else if (runners[subqueue]) {
+              runners[subqueue]++;
+            } else {
+              runners[subqueue] = 1;
+            }
+
+            await wait();
+            throw `Drain ${subqueue} Error`;
+          }
+        );
+
+        const [run1, run2, run3, run4] = await Promise.all([
+          valve.fetch(`subqueue1`).catch((reason) => reason),
+          valve.fetch(`subqueue1`).catch((reason) => reason),
+          valve.fetch(`subqueue2`).catch((reason) => reason),
+          valve.fetch(`subqueue2`).catch((reason) => reason),
+        ]);
+        expect(run1).toBeInstanceOf(Error);
+        expect(run1.message).toStrictEqual(
+          `Fetcher error for Base Fetcher: Drain subqueue1 Error`
+        );
+        expect(run1.cause).toStrictEqual(`Drain subqueue1 Error`);
+
+        expect(run2).toBeInstanceOf(Error);
+        expect(run2.message).toStrictEqual(
+          `Fetcher error for Base Fetcher: Drain subqueue1 Error`
+        );
+        expect(run2.cause).toStrictEqual(`Drain subqueue1 Error`);
+
+        expect(run3).toBeInstanceOf(Error);
+        expect(run3.message).toStrictEqual(
+          `Fetcher error for Base Fetcher: Drain subqueue2 Error`
+        );
+        expect(run3.cause).toStrictEqual(`Drain subqueue2 Error`);
+
+        expect(run4).toBeInstanceOf(Error);
+        expect(run4.message).toStrictEqual(
+          `Fetcher error for Base Fetcher: Drain subqueue2 Error`
+        );
+        expect(run4.cause).toStrictEqual(`Drain subqueue2 Error`);
       });
     });
   });
@@ -349,7 +419,7 @@ describe("BurstValve", () => {
       expect(results).toEqual([`fetch:3`, `fetch:5`, `fetch:1`, `batch`]);
     });
 
-    test("should wrap batch fetcher errors before raising exceptions", async () => {
+    test("should propagate batch fetcher process exceptions", async () => {
       const runs: number[][] = [];
       const valve = new BurstValve<number, number>({
         batch: async (ids) => {
@@ -368,22 +438,58 @@ describe("BurstValve", () => {
       const run2Error = run2[0];
 
       expect(run1Error).toBeInstanceOf(Error);
+      expect((run1Error as Error).message).toEqual(`Mock Run Error: 1`);
+      expect((run1Error as Error).cause).toStrictEqual(undefined);
+
+      expect(run2Error).toBeInstanceOf(Error);
+      expect((run2Error as Error).message).toEqual(`Mock Run Error: 2`);
+      expect((run2Error as Error).cause).toStrictEqual(undefined);
+
+      expect(run1.length).toStrictEqual(3);
+      expect(run1[0] === run1Error).toBeTruthy();
+      expect(run1[1] === run1Error).toBeTruthy();
+      expect(run1[2] === run1Error).toBeTruthy();
+
+      expect(run2.length).toStrictEqual(3);
+      expect(run2[0] === run2Error).toBeTruthy();
+      expect(run2[1] === run1Error).toBeTruthy(); // Reused from the first batch run
+      expect(run2[2] === run2Error).toBeTruthy();
+
+      expect(runs).toEqual([
+        [1, 2, 3],
+        [6, 8],
+      ]);
+    });
+
+    test("should wrap batch fetcher non-Error instances before raising exceptions", async () => {
+      const runs: number[][] = [];
+      const valve = new BurstValve<number, number>({
+        batch: async (ids) => {
+          runs.push([...ids]);
+          const runCount = runs.length;
+          await wait();
+          throw `Mock Run Error: ${runCount}`;
+        },
+      });
+
+      const [run1, run2] = await Promise.all([
+        valve.batch([1, 2, 3]),
+        valve.batch([6, 2, 8]),
+      ]);
+      const run1Error = run1[0];
+      const run2Error = run2[0];
+
+      expect(run1Error).toBeInstanceOf(Error);
       expect((run1Error as Error).message).toEqual(
-        `Batch fetcher error for Burst Valve`
+        `Batch fetcher error for Burst Valve: Mock Run Error: 1`
       );
-      expect((run1Error as Error).cause).toBeInstanceOf(Error);
-      expect(((run1Error as Error).cause as Error).message).toEqual(
-        `Mock Run Error: 1`
-      );
+      expect((run1Error as Error).cause).toStrictEqual(`Mock Run Error: 1`);
 
       expect(run2Error).toBeInstanceOf(Error);
       expect((run2Error as Error).message).toEqual(
-        `Batch fetcher error for Burst Valve`
+        `Batch fetcher error for Burst Valve: Mock Run Error: 2`
       );
-      expect((run2Error as Error).cause).toBeInstanceOf(Error);
-      expect(((run2Error as Error).cause as Error).message).toEqual(
-        `Mock Run Error: 2`
-      );
+      expect((run2Error as Error).cause).toStrictEqual(`Mock Run Error: 2`);
 
       expect(run1.length).toStrictEqual(3);
       expect(run1[0] === run1Error).toBeTruthy();
@@ -436,9 +542,7 @@ describe("BurstValve", () => {
         },
       });
 
-      await expect(valve.fetch(5)).rejects.toThrow(
-        `Batch fetcher error for Burst Valve`
-      );
+      await expect(valve.fetch(5)).rejects.toThrow(`Mock Batch Fetch Error`);
       expect(runs).toEqual([[5]]);
     });
 
@@ -556,19 +660,9 @@ describe("BurstValve", () => {
         },
       });
 
-      try {
-        await valve.unsafeBatch(["a", "b", "c"]);
-        throw new Error("Should Never Get Here");
-      } catch (e) {
-        expect(e).toBeInstanceOf(Error);
-        expect((e as Error).message).toEqual(
-          "Batch fetcher error for Burst Valve"
-        );
-        expect((e as Error).cause).toBeInstanceOf(Error);
-        expect(((e as Error).cause as Error).message).toEqual(
-          "Batch Unsafe Mock Error"
-        );
-      }
+      await expect(valve.unsafeBatch(["a", "b", "c"])).rejects.toThrow(
+        `Batch Unsafe Mock Error`
+      );
     });
 
     test("should throw any exceptions that are early written", async () => {
@@ -579,19 +673,9 @@ describe("BurstValve", () => {
         },
       });
 
-      try {
-        await valve.unsafeBatch(["a", "b", "c"]);
-        throw new Error("Should Never Get Here");
-      } catch (e) {
-        expect(e).toBeInstanceOf(Error);
-        expect((e as Error).message).toEqual(
-          "Batch fetcher error for Burst Valve"
-        );
-        expect((e as Error).cause).toBeInstanceOf(Error);
-        expect(((e as Error).cause as Error).message).toEqual(
-          "Batch Unsafe Mock Error"
-        );
-      }
+      await expect(valve.unsafeBatch(["a", "b", "c"])).rejects.toThrow(
+        `Batch Unsafe Mock Error`
+      );
     });
 
     test("should throw any exceptions raised by an earlier queue", async () => {
@@ -612,19 +696,9 @@ describe("BurstValve", () => {
       // Trigger first fetch to build the queues
       valve.unsafeBatch([1, 2, 3]).catch(() => undefined);
 
-      try {
-        await valve.unsafeBatch([1, 5, 6]);
-        throw new Error("Should Never Get Here");
-      } catch (e) {
-        expect(e).toBeInstanceOf(Error);
-        expect((e as Error).message).toEqual(
-          "Batch fetcher error for Burst Valve"
-        );
-        expect((e as Error).cause).toBeInstanceOf(Error);
-        expect(((e as Error).cause as Error).message).toEqual(
-          `Batch Unsafe Mock Error id:1 - count:1`
-        );
-      }
+      await expect(valve.unsafeBatch([1, 5, 6])).rejects.toThrow(
+        `Batch Unsafe Mock Error id:1 - count:1`
+      );
     });
   });
 

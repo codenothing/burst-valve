@@ -58,6 +58,17 @@ export interface BurstValveParams<DrainResult, SubqueueKeyType> {
 }
 
 /**
+ * Only wraps non Error instances in an exception
+ *
+ * @param error Unknown error raised
+ * @param messagePrefix Prefix string when error is not an exception
+ */
+const optionallyWrapError = (error: unknown, messagePrefix: string): Error =>
+  error instanceof Error
+    ? error
+    : new Error(`${messagePrefix}: ${error}`, { cause: error });
+
+/**
  * Concurrent queue for a single (or batch) asynchronous action
  *
  * @type DrainResult Result type when queue is drained
@@ -222,7 +233,7 @@ export class BurstValve<
         .catch((e) =>
           this.flushResult(
             subqueue,
-            new Error(`Fetcher error for ${this.displayName}`, { cause: e })
+            optionallyWrapError(e, `Fetcher error for ${this.displayName}`)
           )
         );
     });
@@ -249,7 +260,7 @@ export class BurstValve<
   public async unsafeBatch(
     subqueues: SubqueueKeyType[]
   ): Promise<Array<DrainResult>> {
-    return this.runBatch(subqueues, true) as Promise<Array<DrainResult>>;
+    return this.runBatch(subqueues, true);
   }
 
   /**
@@ -301,6 +312,26 @@ export class BurstValve<
     // Wait for all queues to resolve
     await Promise.all([batchPromise, ...streamResponses]);
   }
+
+  /**
+   * Normalized runner for batch and batchUnsafe
+   *
+   * @param subqueues List of unique identifiers to fetch at once
+   */
+  private async runBatch(
+    subqueues: SubqueueKeyType[]
+  ): Promise<Array<DrainResult | Error>>;
+
+  /**
+   * Normalized runner for batch and batchUnsafe
+   *
+   * @param subqueues List of unique identifiers to fetch at once
+   * @param raiseExceptions Indicates if exceptions should be raised when found
+   */
+  private async runBatch(
+    subqueues: SubqueueKeyType[],
+    raiseExceptions: true
+  ): Promise<Array<DrainResult>>;
 
   /**
    * Normalized runner for batch and batchUnsafe
@@ -466,9 +497,9 @@ export class BurstValve<
         .catch((e) => {
           finished = true;
 
-          const error = new Error(
-            `Batch fetcher error for ${this.displayName}`,
-            { cause: e }
+          const error = optionallyWrapError(
+            e,
+            `Batch fetcher error for ${this.displayName}`
           );
 
           subqueues.forEach((id) => {
